@@ -106,3 +106,17 @@ async def test_profile_can_only_be_opened_once(site, tmp_path):
 async def test_profile_dir_is_private(tmp_path):
     async with session(tmp_path) as s:
         assert oct(s.profile_dir.stat().st_mode & 0o777) == "0o700"
+
+
+async def test_human_check_during_a_search_is_not_reported_as_nothing_found(tmp_path, monkeypatch):
+    # Real Chrome; every store page is replaced by a human-check challenge.
+    import app.shopping.instacart as ic
+    from app.shopping.instacart import HumanCheckError, InstacartSite
+
+    monkeypatch.setattr(ic, "BASE", "http://127.0.0.1:9")      # nothing there; the route answers first
+    monkeypatch.setattr(ic, "RESULTS_TIMEOUT_MS", 1500)
+    async with session(tmp_path) as s:
+        await s.page.route("**/store/**", lambda r: r.fulfill(
+            content_type="text/html", body="<h1>Verify you are a human</h1><p>Press and hold</p>"))
+        with pytest.raises(HumanCheckError, match="BROWSER_MODE=visible"):
+            await InstacartSite(s.page).search("aldi", "onion", "onion")

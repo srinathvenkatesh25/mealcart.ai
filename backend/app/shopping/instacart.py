@@ -24,7 +24,10 @@ from playwright.async_api import Page
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
 from app.shopping.packs import G_PER, parse_size
-from app.shopping.session import Ask, BrowserSession, ensure_logged_in, human_pause, login
+from app.config import get_settings
+from app.shopping.session import (
+    Ask, BrowserSession, captcha_present, ensure_logged_in, human_pause, login,
+)
 
 BASE = "https://www.instacart.com"
 RESULTS_TIMEOUT_MS = 15000
@@ -153,6 +156,12 @@ class InstacartSite:
         try:
             await cards.first.wait_for(timeout=RESULTS_TIMEOUT_MS)
         except PlaywrightTimeoutError:
+            # No results can mean "nothing found" or "Instacart wants a human". Don't report the
+            # second as the first: every item would look unavailable.
+            if await captcha_present(self.page):
+                raise HumanCheckError(
+                    "Instacart is asking for a human check. Set BROWSER_MODE=visible, run again, and "
+                    "solve it in the Chrome window.") from None
             return None
         await self.page.wait_for_timeout(800)  # let the rest of the grid render
         return cards
@@ -250,13 +259,41 @@ class InstacartSite:
         await self.page.keyboard.press("Escape")
 
 
+class LoginRequiredError(Exception):
+    """Hidden mode can't sign in: a sign-in may need a CAPTCHA, which needs a visible window."""
+
+
+class HumanCheckError(Exception):
+    """Instacart is asking for a human check mid-run. Only a person can pass it."""
+
+
 @asynccontextmanager
 async def open_instacart(user_id: str, ask: Ask) -> AsyncIterator[InstacartSite]:
     """Open the user's Chrome profile, sign in through `ask` if needed, and yield the site.
 
-    The browser stays open for the whole shop step, including any pauses.
+    BROWSER_MODE decides whether you see the window (see config). In `auto` the shopping runs
+    in a hidden window; if you aren't signed in, a visible window opens just for the sign-in
+    (the login is kept in the profile), then Chrome reopens hidden. The browser then stays
+    open for the whole shop step, including any pauses.
     """
-    async with BrowserSession(user_id) as session:
+    mode = get_settings().browser_mode
+    headless = mode != "visible"
+    session = await BrowserSession(user_id, headless=headless).start()
+    try:
         if not await ensure_logged_in(session.page):
-            await login(session.page, ask)
+            if mode == "hidden":
+                raise LoginRequiredError("You're not signed in to Instacart. Run `python scripts/login.py` "
+                                         "once (it opens a window), or set BROWSER_MODE=auto.")
+            if headless:  # auto: swap to a visible window for the sign-in only
+                await session.close()
+                session = await BrowserSession(user_id, headless=False).start()
+                await login(session.page, ask)
+                await session.close()
+                session = await BrowserSession(user_id, headless=True).start()
+                if not await ensure_logged_in(session.page):
+                    raise LoginRequiredError("Signed in, but Instacart didn't keep the session. Try again.")
+            else:
+                await login(session.page, ask)
         yield InstacartSite(session.page)
+    finally:
+        await session.close()

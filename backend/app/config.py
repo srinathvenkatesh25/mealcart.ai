@@ -31,6 +31,9 @@ class Settings(BaseSettings):
     database_path: str = "./mealcart.db"
     checkpoint_path: str = "./checkpoints.db"
     single_user_id: str = "user_default"
+    # hidden: Chrome runs with no window. visible: you watch it. auto: hidden, except a window
+    # opens when you need to sign in (a CAPTCHA can only be solved in a visible window).
+    browser_mode: str = "auto"
     web_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
 
 

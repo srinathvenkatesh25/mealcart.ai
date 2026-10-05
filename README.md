@@ -76,8 +76,9 @@ Open http://localhost:3000. **After changing any backend code, restart terminal 
    One AI call replaces just that meal, the day is re-balanced, and the list is rebuilt.
 5. **Check the grocery list.** Untick anything you already have. The card shows the estimated cost
    against your budget (once prices from an earlier cart are known).
-6. **Click Fill my cart.** Chrome opens on Instacart. If your cart already has items it asks whether
-   to empty it. Answer login codes on the page if asked.
+6. **Click Fill my cart.** MealCart shops in a hidden Chrome window; the activity feed shows each item
+   as it's added. A window appears only if you need to sign in. If your cart already has items it
+   asks whether to empty it. To watch the browser instead, set `BROWSER_MODE=visible` in `.env`.
 7. **Review the cart.** Every item is checked against the list (needed vs in cart, price, substitutes).
    Open Instacart and check out yourself.
 
@@ -95,8 +96,9 @@ To drive the same flow without the page: `python scripts/run_cli.py`.
 | "Every AI model ... is out of free quota" | All models are used up for today. Wait (the message says how long) or add another key. |
 | Slow run, "rate-limited; waiting Ns" | Running on Groq, whose free tier allows 8,000 tokens a minute. It's waiting, not stuck. |
 | "Request too large" (413) | Groq's cap per request. The app splits the request and retries; if you still see it, you're on an old server: restart. |
-| "Another run is already using the Instacart browser" | Close the Chrome window MealCart opened earlier, then retry. |
-| "Not signed in" | Run `python scripts/login.py` again; Instacart ended the session. |
+| "Another run is already using the Instacart browser" | Another run, or `scripts/login.py`, has the profile open. Wait for it to finish or close its Chrome window, then retry. |
+| "You're not signed in to Instacart" | Run `python scripts/login.py` again; Instacart ended the session. (In the default `auto` mode a window opens for the sign-in by itself.) |
+| "Instacart asked for a human check" | Hidden Chrome can't pass a CAPTCHA. Set `BROWSER_MODE=visible` in `.env`, restart the server, run again and solve it in the window. |
 | "Heads up: Main protein 'chicken' conflicts with your restriction..." | Your protein and diet contradict. The protein was ignored. Fix the form to avoid this. |
 | "Guard blocked N checkout/payment requests" | Expected. The app's Chrome refuses checkout pages by design. |
 
@@ -105,7 +107,7 @@ To drive the same flow without the page: `python scripts/run_cli.py`.
 ```bash
 cd ~/mealcart-agent
 source .venv/bin/activate
-pytest -q                                  # all 210, about 75 seconds (includes real-Chrome tests)
+pytest -q                                  # all 218, about 75 seconds (includes real-Chrome tests)
 pytest -q --ignore=tests/test_session.py   # without the Chrome tests, about 2 seconds
 ```
 

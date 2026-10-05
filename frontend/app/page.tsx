@@ -26,6 +26,8 @@ const FAILURES: Record<string, string> = {
   invalid_edit: "The edited grocery list couldn't be read.",
   HitlTimeoutError: "Nobody answered a question within 15 minutes, so the run stopped.",
   LoginFailedError: "Signing in to Instacart didn't finish.",
+  LoginRequiredError: "You're not signed in to Instacart. Run python scripts/login.py once, then try again.",
+  HumanCheckError: "Instacart asked for a human check. Set BROWSER_MODE=visible in .env, restart the server, and solve it in the Chrome window.",
   ProfileBusyError: "Another run is already using the Instacart browser. Close it and try again.",
 };
 

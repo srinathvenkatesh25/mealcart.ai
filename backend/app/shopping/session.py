@@ -127,7 +127,7 @@ async def _visible(locator) -> bool:
     return await locator.count() > 0 and await locator.first.is_visible()
 
 
-async def _captcha_present(page: Page) -> bool:
+async def captcha_present(page: Page) -> bool:
     frames = page.locator("iframe[src*='captcha'], iframe[src*='challenge'], iframe[title*='challenge' i]")
     text = page.get_by_text(re.compile(r"verify (that )?you('re| are) (a )?human|press (and|&) hold", re.I))
     return await _visible(frames) or await _visible(text)
@@ -177,7 +177,7 @@ async def login(page: Page, ask: Ask, url: str = HOME_URL, timeout_s: int = LOGI
     loop = asyncio.get_running_loop()
     deadline = loop.time() + timeout_s
     while loop.time() < deadline:
-        if await _captcha_present(page):
+        if await captcha_present(page):
             await ask("captcha", "Instacart is showing a CAPTCHA. Solve it in the browser window, "
                                  "then reply 'done'.", await page.screenshot())
             await page.wait_for_timeout(2000)
