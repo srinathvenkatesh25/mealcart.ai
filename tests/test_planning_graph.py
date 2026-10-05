@@ -11,7 +11,7 @@ MUSHROOM = [("button_mushrooms", 50)]
 
 
 def spec(days=2) -> MealSpec:
-    return MealSpec(zip_code="61801", days=days, include_snacks=False, dislikes=["mushrooms"],
+    return MealSpec(zip_code="12345", days=days, include_snacks=False, dislikes=["mushrooms"],
                     macros={"calories": 2000, "protein_g": 150})
 
 
@@ -96,12 +96,12 @@ async def test_days_per_call_chunks_and_aligns_names():
 
 def test_feasibility_warning():
     from app.intake.intake import feasibility_warnings
-    s = MealSpec(zip_code="1", macros={"calories": 1500, "protein_g": 250})
+    s = MealSpec(zip_code="12345", macros={"calories": 1500, "protein_g": 250})
     assert "67% of your calories" in feasibility_warnings(s)[0]
 
 
 def vegetarian_spec(**kw) -> MealSpec:
-    return MealSpec(zip_code="61801", days=1, include_snacks=False, protein_source="chicken",
+    return MealSpec(zip_code="12345", days=1, include_snacks=False, protein_source="chicken",
                     dietary_restrictions=["vegetarian"], macros={"calories": 2000, "protein_g": 150}, **kw)
 
 

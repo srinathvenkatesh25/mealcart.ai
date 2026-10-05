@@ -23,7 +23,6 @@ SERVER = os.environ.get("MEALCART_SERVER", "http://localhost:8000")
 SECRET_KINDS = {"email_code", "login_password"}
 
 DEFAULT_SPEC = {
-    "zip_code": "61801",
     "days": 7,
     "macros": {"calories": 2200, "protein_g": 140},
     "cuisines": ["Indian"],
@@ -114,5 +113,7 @@ async def main(spec: dict) -> int:
 
 
 if __name__ == "__main__":
-    spec = json.load(open(sys.argv[1])) if len(sys.argv) > 1 else DEFAULT_SPEC
+    spec = json.load(open(sys.argv[1])) if len(sys.argv) > 1 else dict(DEFAULT_SPEC)
+    if not spec.get("zip_code"):
+        spec["zip_code"] = os.environ.get("MEALCART_ZIP") or input("Your 5-digit ZIP code: ").strip()
     sys.exit(asyncio.run(main(spec)))

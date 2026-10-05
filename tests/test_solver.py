@@ -11,7 +11,7 @@ MACROS = {n: FoodMacros(calories=k, protein_g=p, carbs_g=c, fat_g=f, fdc_id=0, d
 
 
 def spec(calories=2000, protein=150, **kw) -> MealSpec:
-    return MealSpec(zip_code="61801", days=1, include_snacks=False,
+    return MealSpec(zip_code="12345", days=1, include_snacks=False,
                     macros={"calories": calories, "protein_g": protein}, **kw)
 
 

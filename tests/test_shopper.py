@@ -8,7 +8,7 @@ from fakes import FakeSite, ScriptedLLM, cand, fake_lookup, rough_day
 
 
 def spec(**kw):
-    return MealSpec(zip_code="61801", days=1, include_snacks=False, budget_weekly_usd=30,
+    return MealSpec(zip_code="12345", days=1, include_snacks=False, budget_weekly_usd=30,
                     macros={"calories": 2000, "protein_g": 150}, **kw)
 
 
@@ -120,3 +120,21 @@ async def test_rerun_does_not_double_add():
 def test_pick_prompt_asks_for_the_named_cut():
     assert '"breast" is not "thigh"' in shopper.PICK_SYSTEM
     assert "only when no candidate names it" in shopper.PICK_SYSTEM
+
+
+async def test_warns_when_instacart_delivers_somewhere_else():
+    site = FakeSite(CATALOG)
+    site.delivery_zip = "99999"            # your account's address; the spec says 12345
+    report, complete, _, events = await run(site, shopping_llm(), {"substitution_approval": "yes"})
+    warning = ("Instacart is set to deliver to 99999, not your ZIP 12345. Stores and prices are for 99999. "
+               "To shop for 12345, change the delivery address in Instacart and run again.")
+    assert warning in report.notes and warning in events
+    assert complete                         # a warning, not a blocker
+
+
+async def test_no_warning_when_zip_matches_or_is_unknown():
+    for seen in ("12345", None):
+        site = FakeSite(CATALOG)
+        site.delivery_zip = seen
+        report, _, _, events = await run(site, shopping_llm(), {"substitution_approval": "yes"})
+        assert not any("deliver to" in n for n in report.notes) and not any("deliver to" in e for e in events)

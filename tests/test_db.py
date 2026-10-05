@@ -21,7 +21,7 @@ async def test_init_db_creates_tables_and_seeds_user():
 
 async def test_run_round_trip():
     await db.init_db()
-    spec = {"zip_code": "61801", "macros": {"calories": 2500, "protein_g": 140}}
+    spec = {"zip_code": "12345", "macros": {"calories": 2500, "protein_g": 140}}
     run_id = await db.create_run("user_default", spec)
 
     run = await db.get_run(run_id)

@@ -34,6 +34,7 @@ class Site(Protocol):
     async def add(self, store: str, query: str, product_name: str, packs: int) -> float: ...
     async def cart_lines(self, store: str) -> list[CartEntry]: ...
     async def clear_cart(self, store: str) -> None: ...
+    delivery_zip: str | None
 
 
 class StoreShortlist(BaseModel):
@@ -147,6 +148,12 @@ async def fill_cart(spec: MealSpec, plan: MealPlan, grocery_list: GroceryList, *
     notes: list[str] = []
 
     existing = await site.cart_lines(store)
+    if site.delivery_zip and site.delivery_zip != spec.zip_code:
+        warning = (f"Instacart is set to deliver to {site.delivery_zip}, not your ZIP {spec.zip_code}. Stores and "
+                   f"prices are for {site.delivery_zip}. To shop for {spec.zip_code}, change the delivery address "
+                   "in Instacart and run again.")
+        notes.append(warning)
+        await emit(events.progress(rid, "shop", warning))
     cleared = False
     if existing:
         answer = await ask("cart_clear_approval",

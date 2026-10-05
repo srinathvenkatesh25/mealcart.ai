@@ -8,7 +8,7 @@ from app.models import DayPlan
 
 
 def spec(**kw) -> MealSpec:
-    return MealSpec(zip_code="61801", macros={"calories": 2000, "protein_g": 150}, **kw)
+    return MealSpec(zip_code="12345", macros={"calories": 2000, "protein_g": 150}, **kw)
 
 
 def week_plan(days=7) -> MealPlan:

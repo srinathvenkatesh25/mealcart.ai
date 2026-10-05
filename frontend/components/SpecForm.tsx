@@ -10,7 +10,7 @@ export const DEFAULT_SPEC: MealSpec = {
   macros: { calories: 2200, protein_g: 140 },
   cuisines: ["Indian"],
   budget_weekly_usd: 60,
-  zip_code: "61801",
+  zip_code: "",
   include_snacks: true,
   allergies: [],
   dietary_restrictions: [],
@@ -97,7 +97,7 @@ export default function SpecForm({ busy, error, onSubmit }: Props) {
             rows={5}
             value={words}
             onChange={(e) => setWords(e.target.value)}
-            placeholder="2200 calories and 140 g protein a day, Indian food with chicken, no mushrooms, 30 minutes per meal, ZIP 61801, $60 a week"
+            placeholder="2200 calories and 140 g protein a day, Indian food with chicken, no mushrooms, 30 minutes per meal, ZIP 12345, $60 a week"
             required
           />
           <small>Include your ZIP code. Anything you leave out uses the defaults.</small>
@@ -129,8 +129,10 @@ export default function SpecForm({ busy, error, onSubmit }: Props) {
             </label>
             <label className="field">
               <span>ZIP code</span>
-              <input inputMode="numeric" pattern="[0-9]{5}" required value={spec.zip_code}
-                onChange={(e) => set("zip_code", e.target.value)} />
+              <input inputMode="numeric" pattern="[0-9]{5}" maxLength={5} required value={spec.zip_code}
+                placeholder="5 digits" autoComplete="postal-code" title="A 5-digit US ZIP code"
+                onChange={(e) => set("zip_code", e.target.value.replace(/\D/g, ""))} />
+              <small>We check Instacart delivers here.</small>
             </label>
             <label className="field">
               <span>Weekly budget</span>

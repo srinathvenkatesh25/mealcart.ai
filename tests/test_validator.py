@@ -21,7 +21,7 @@ async def fake_lookup(name: str) -> FoodMacros:
 
 
 def spec(**overrides) -> MealSpec:
-    base = dict(zip_code="61801", days=1, macros={"calories": 2000, "protein_g": 155}, include_snacks=True)
+    base = dict(zip_code="12345", days=1, macros={"calories": 2000, "protein_g": 155}, include_snacks=True)
     return MealSpec(**{**base, **overrides})
 
 

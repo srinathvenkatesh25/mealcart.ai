@@ -249,7 +249,7 @@ Every failure produces one mechanical hint naming the day, meal and biggest cont
   1. `login_email` → typed in
   2. `email_code` or `login_password` → typed in, memory only
   3. `captcha`: the chat shows a screenshot. Text CAPTCHAs are answered in the chat. Interactive ones (press-and-hold, drag) are solved in the **LiveView**.
-- Set the ZIP, and remember the previous address so it can be restored at the end (noted in the report).
+- The ZIP you enter is **checked, not applied**: the cart screen shows the delivery ZIP of your Instacart account, and a mismatch is reported as a warning before items are added. Changing a saved delivery address is deliberately left to you.
 - Human-speed actions (300–900 ms of jitter).
 
 ## 13. Shopper (`shopping/shopper.py`, `verify.py`)

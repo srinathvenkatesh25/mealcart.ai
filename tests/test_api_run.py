@@ -58,7 +58,7 @@ class World:
         return Deps(make_llm=self.make_llm, lookup=fake_lookup, open_site=self.open_site)
 
 
-SPEC = MealSpec(zip_code="61801", days=1, include_snacks=False,
+SPEC = MealSpec(zip_code="12345", days=1, include_snacks=False,
                 macros={"calories": 2000, "protein_g": 150}).model_dump()
 
 
@@ -203,7 +203,7 @@ def test_shop_failure_is_reported_not_silent():
         assert client.get(f"/api/runs/{run_id}").json()["status"] == "failed"
 
 
-@pytest.mark.parametrize("body", [{"zip_code": "61801"}, {"text": ""}])
+@pytest.mark.parametrize("body", [{"zip_code": "12345"}, {"text": ""}])
 def test_bad_request_is_422(body):
     with TestClient(create_app(World().deps())) as client:
         assert client.post("/api/runs", json=body).status_code == 422

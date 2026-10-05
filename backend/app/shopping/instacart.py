@@ -134,6 +134,7 @@ class InstacartSite:
 
     def __init__(self, page: Page):
         self.page = page
+        self.delivery_zip: str | None = None   # what Instacart says it delivers to; set when the cart opens
 
     async def list_stores(self) -> list[tuple[str, str]]:
         await self.page.goto(f"{BASE}/store/directory", wait_until="domcontentloaded")
@@ -236,7 +237,10 @@ class InstacartSite:
         await self.cart_count(store)
         await self.page.get_by_role("button", name=re.compile(r"View Cart", re.I)).first.click()
         await self.page.wait_for_timeout(2500)
-        return self.page.get_by_role("dialog").last
+        dialog = self.page.get_by_role("dialog").last
+        zip_match = re.search(r"Shopping in (\d{5})", await dialog.inner_text())  # also shown on an empty cart
+        self.delivery_zip = zip_match.group(1) if zip_match else self.delivery_zip
+        return dialog
 
     async def cart_lines(self, store: str) -> list[CartEntry]:
         dialog = await self._open_cart(store)

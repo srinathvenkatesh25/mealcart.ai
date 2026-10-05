@@ -69,6 +69,7 @@ class FakeSite:
         self.cart: dict[str, CartEntry] = {e.name: e for e in (cart or [])}
         self.prices = {c.name: c for cs in catalog.values() for c in cs}
         self.adds: list[tuple[str, int]] = []
+        self.delivery_zip: str | None = "12345"
 
     async def list_stores(self):
         return [("meijer", "Meijer"), ("quicklly-grocery", "Quicklly Indian Grocery"), ("cvs", "CVS")]

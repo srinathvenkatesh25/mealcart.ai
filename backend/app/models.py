@@ -32,7 +32,7 @@ class MealSpec(BaseModel):
     macros: MacroTargets
     cuisines: list[str] = []
     budget_weekly_usd: float | None = None
-    zip_code: str
+    zip_code: str = Field(pattern=r"^\d{5}$", description="US ZIP; checked against Instacart's delivery address")
     include_snacks: bool = True
     allergies: list[str] = []
     dietary_restrictions: list[str] = []

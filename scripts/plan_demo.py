@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import os
 import sys
 import time
 
@@ -17,7 +18,7 @@ from app.planner.llm import LLM  # noqa: E402
 async def main(days: int) -> None:
     await db.init_db()
     spec = MealSpec(
-        zip_code="61801", days=days, include_snacks=True,
+        zip_code=os.environ.get("MEALCART_ZIP") or input("Your 5-digit ZIP code: ").strip(), days=days, include_snacks=True,
         macros={"calories": 2200, "protein_g": 140},
         cuisines=["Indian"], protein_source="chicken",
         dislikes=["mushrooms", "mayonnaise"],

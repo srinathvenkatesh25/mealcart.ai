@@ -6,6 +6,7 @@
 
 import argparse
 import asyncio
+import os
 import sys
 import time
 
@@ -27,7 +28,8 @@ SAFE_ANSWERS = {"cart_clear_approval": "keep", "substitution_approval": "no"}
 
 async def main(auto: bool) -> int:
     await db.init_db()
-    spec = MealSpec(zip_code="61801", days=1, include_snacks=False, budget_weekly_usd=60,
+    zip_code = os.environ.get("MEALCART_ZIP") or input("Your 5-digit ZIP code: ").strip()
+    spec = MealSpec(zip_code=zip_code, days=1, include_snacks=False, budget_weekly_usd=60,
                     macros={"calories": 2200, "protein_g": 140}, cuisines=["Indian"])
     plan = MealPlan(days=[DayPlan(day="Monday", meals=[Meal(
         slot="lunch", title="test list", prep_minutes=10,

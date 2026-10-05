@@ -7,7 +7,7 @@ from fakes import fake_lookup, meal
 
 
 def spec(**kw) -> MealSpec:
-    return MealSpec(zip_code="61801", days=1, include_snacks=False,
+    return MealSpec(zip_code="12345", days=1, include_snacks=False,
                     macros={"calories": 2000, "protein_g": 150}, **kw)
 
 
