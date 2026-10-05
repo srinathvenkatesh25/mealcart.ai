@@ -11,12 +11,12 @@ from pydantic import ValidationError
 from app import db
 from app.graph.state import RunState
 from app.hitl import events
-from app.intake.intake import feasibility_warnings
-from app.nutrition import solver, validator
+from app.intake.intake import feasibility_warnings, resolve_conflicts
+from app.nutrition import solver, timing, validator
 from app.nutrition.usda import UnknownIngredientError
 from app.planner import planner
 from app.models import GroceryList
-from app.planner.llm import LLMOutputError, LLMQuotaError
+from app.planner.llm import LLMOutputError, LLMQuotaError, LLMTooLargeError
 from app.shopping import consolidator, shopper
 
 MAX_REPAIR_ATTEMPTS = 3
@@ -29,10 +29,13 @@ def _deps(config: RunnableConfig):
 
 async def intake(state: RunState, config: RunnableConfig) -> RunState:
     _, _, emit = _deps(config)
-    warnings = feasibility_warnings(state["spec"])
+    spec, conflicts = resolve_conflicts(state["spec"])
+    if conflicts:
+        await db.update_run(state["run_id"], meal_spec_json=spec.model_dump())
+    warnings = conflicts + feasibility_warnings(spec)
     for w in warnings:
         await emit(events.progress(state["run_id"], "intake", f"Heads up: {w}"))
-    return {"warnings": warnings, "repair_attempts": 0}
+    return {"spec": spec, "warnings": warnings, "repair_attempts": 0}
 
 
 async def plan(state: RunState, config: RunnableConfig) -> RunState:
@@ -41,7 +44,7 @@ async def plan(state: RunState, config: RunnableConfig) -> RunState:
     await emit(events.progress(run_id, "plan", f"Planning {spec.days} days…"))
     try:
         meal_plan = await planner.generate(spec, llm, run_id)
-    except (LLMQuotaError, LLMOutputError, ValueError) as e:
+    except (LLMQuotaError, LLMOutputError, LLMTooLargeError, ValueError) as e:
         return await _llm_failed(state, emit, e)
     await db.update_run(run_id, meal_plan_json=meal_plan.model_dump())
     return {"meal_plan": meal_plan}
@@ -52,9 +55,12 @@ async def solve(state: RunState, config: RunnableConfig) -> RunState:
     run_id = state["run_id"]
     meal_plan, missed = await solver.solve_plan(state["meal_plan"], state["spec"], lookup,
                                                 only=state.get("solve_days"))
+    meal_plan, adjusted = timing.apply_minimums(meal_plan, state["spec"])
     await db.update_run(run_id, meal_plan_json=meal_plan.model_dump())
     msg = "Portions sized to hit calories and protein"
     await emit(events.progress(run_id, "solve", msg + (f" (still off: {', '.join(missed)})" if missed else "")))
+    if adjusted:
+        await emit(events.progress(run_id, "solve", f"Raised {adjusted} meal time(s) to realistic cooking times"))
     return {"meal_plan": meal_plan, "solve_days": None}
 
 
@@ -73,13 +79,14 @@ async def repair(state: RunState, config: RunnableConfig) -> RunState:
     try:
         meal_plan = await planner.repair(state["spec"], state["meal_plan"], state["validation"].deltas,
                                          llm, state["run_id"])
-    except (LLMQuotaError, LLMOutputError, ValueError) as e:
+    except (LLMQuotaError, LLMOutputError, LLMTooLargeError, ValueError) as e:
         return {**await _llm_failed(state, emit, e), "repair_attempts": attempt}
     return {"meal_plan": meal_plan, "repair_attempts": attempt}
 
 
 async def _llm_failed(state: RunState, emit, e: Exception) -> RunState:
-    error = "llm_quota_exceeded" if isinstance(e, LLMQuotaError) else "llm_bad_output"
+    error = ("llm_quota_exceeded" if isinstance(e, LLMQuotaError)
+             else "llm_too_large" if isinstance(e, LLMTooLargeError) else "llm_bad_output")
     await db.update_run(state["run_id"], status="failed", error=f"{error}: {e}")
     await emit(events.failed(state["run_id"], error, [str(e)]))
     return {"error": error}
@@ -158,7 +165,7 @@ async def swap(state: RunState, config: RunnableConfig) -> RunState:
     try:
         new_plan = await planner.swap_meal(spec, plan, day, slot, str(req.get("reason", "")), kcal, protein,
                                            llm, run_id)
-    except (LLMQuotaError, LLMOutputError) as e:
+    except (LLMQuotaError, LLMOutputError, LLMTooLargeError) as e:
         return await _llm_failed(state, emit, e)
     new_meal = new_plan.days[where[0]].meals[where[1]]
     await emit(events.progress(run_id, "swap", f"New {old.slot}: {new_meal.title}"))

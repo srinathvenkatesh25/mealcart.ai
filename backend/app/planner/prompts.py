@@ -3,7 +3,7 @@
 import json
 
 from app.models import DayPlan, Meal, MealPlan, MealSpec
-from app.nutrition.maps import ALIAS, MANUAL_MACROS
+from app.nutrition.maps import ALIAS, MANUAL_MACROS, forbidden_terms
 
 SKILL_GUIDANCE = {
     "basic": "Basic cook: one-pot, sheet-pan, rice-cooker or microwave meals; no deep-frying, "
@@ -21,7 +21,8 @@ EFFORT_GUIDANCE = {
 PLANNER_SYSTEM = """You plan home-cooked meals and reply only with JSON.
 
 Hard rules (a program checks every one; violations are rejected):
-- Never use these ingredients or anything containing them: {exclusions}.
+- Never use any of these, or anything containing them:
+{exclusions}
 - Every meal takes at most {max_prep} minutes (prep + cooking) — set prep_minutes honestly.
 - equipment_used lists only appliances from: {equipment}. Pots, pans and knives need not be listed.
 - {skill}
@@ -65,10 +66,20 @@ def _slots(spec: MealSpec) -> list[str]:
             else ["breakfast", "lunch", "dinner"])
 
 
+def exclusion_lines(spec: MealSpec) -> str:
+    lines = []
+    for kind, labels in (("allergy", spec.allergies), ("restriction", spec.dietary_restrictions),
+                         ("dislike", spec.dislikes)):
+        for label in labels:
+            terms = ", ".join(forbidden_terms(label, kind)[:40])
+            noun = {"allergy": "allergy", "restriction": "diet", "dislike": "dislike"}[kind]
+            lines.append(f"  - {label} ({noun}): {terms}")
+    return "\n".join(lines) if lines else "  (nothing)"
+
+
 def planner_system(spec: MealSpec) -> str:
-    exclusions = spec.allergies + spec.dietary_restrictions + spec.dislikes
     return PLANNER_SYSTEM.format(
-        exclusions=", ".join(exclusions) if exclusions else "(none)",
+        exclusions=exclusion_lines(spec),
         max_prep=spec.max_prep_minutes,
         equipment=", ".join(spec.equipment),
         skill=SKILL_GUIDANCE[spec.cooking_skill],
@@ -96,9 +107,10 @@ def planner_user(days: list[str], earlier: list[DayPlan]) -> str:
 
 
 def repair_user(failing: list[DayPlan], hints: dict[str, list[str]]) -> str:
+    # Compact JSON: indented JSON costs about twice the tokens, and small free tiers cap a request.
     problems = "\n\n".join(
         f"{d.day} problems:\n" + "\n".join(f"- {h}" for h in hints[d.day])
-        + f"\n{d.day} current plan:\n{json.dumps(d.model_dump(), indent=1)}"
+        + f"\n{d.day} current plan:\n{json.dumps(d.model_dump(), separators=(',', ':'))}"
         for d in failing
     )
     return REPAIR_USER.format(days=", ".join(d.day for d in failing), problems=problems)

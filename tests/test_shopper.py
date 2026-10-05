@@ -115,3 +115,8 @@ async def test_rerun_does_not_double_add():
     assert "item: paneer" not in pick_prompt and "item: chicken_breast" not in pick_prompt
     assert complete and {e.name: e.quantity for e in site.cart.values()} == {
         "Halal Chicken Breast": 2, "Nanak Paneer": 1, "Rani Toor Dal": 1}
+
+
+def test_pick_prompt_asks_for_the_named_cut():
+    assert '"breast" is not "thigh"' in shopper.PICK_SYSTEM
+    assert "only when no candidate names it" in shopper.PICK_SYSTEM

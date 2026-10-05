@@ -114,6 +114,8 @@ def test_full_run_with_approval_and_login_pause():
         run = client.get(f"/api/runs/{run_id}").json()
         assert run["status"] == "cart_ready" and run["open_hitl_event"] is None
         assert len(run["cart_report_json"]["lines"]) == 7
+        assert run["llm_usage"] == {"calls": 0, "input_tokens": 0, "output_tokens": 0, "cost_usd": 0.0,
+                                    "models": []}  # the fake LLM here makes no logged calls
 
     # The code went to the waiting shopper only: it is nowhere in the database.
     assert SECRET_CODE.encode() not in open(get_settings().database_path, "rb").read()

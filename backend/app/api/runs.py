@@ -35,4 +35,5 @@ async def get_run(request: Request, run_id: str) -> dict:
         raise HTTPException(404, "run not found")
     run["open_hitl_event"] = await db.get_open_hitl_event(run_id)
     run["last_seq"] = request.app.state.registry.get(run_id).bus.seq
+    run["llm_usage"] = await db.llm_usage(run_id)
     return run

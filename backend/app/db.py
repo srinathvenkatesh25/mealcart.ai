@@ -218,6 +218,24 @@ async def put_usda_cache(query: str, payload: dict[str, Any]) -> None:
         await db.commit()
 
 
+async def llm_usage(run_id: str) -> dict[str, Any]:
+    """AI calls made for one run: totals, and a per-model breakdown."""
+    async with aiosqlite.connect(_db_path()) as db:
+        async with db.execute(
+            "SELECT model, COUNT(*), SUM(input_tokens), SUM(output_tokens), SUM(cost_usd) "
+            "FROM llm_calls WHERE run_id = ? GROUP BY model ORDER BY MIN(created_at)", (run_id,)
+        ) as cur:
+            rows = await cur.fetchall()
+    models = [{"model": m, "calls": n, "tokens": (tin or 0) + (tout or 0)} for m, n, tin, tout, _ in rows]
+    return {
+        "calls": sum(r[1] for r in rows),
+        "input_tokens": sum(r[2] or 0 for r in rows),
+        "output_tokens": sum(r[3] or 0 for r in rows),
+        "cost_usd": round(sum(r[4] or 0 for r in rows), 4),
+        "models": models,
+    }
+
+
 async def record_price(user_id: str, item: str, product_name: str, pack_grams: float,
                        unit_price_usd: float) -> None:
     async with aiosqlite.connect(_db_path()) as db:

@@ -65,3 +65,20 @@ async def test_llm_call_cost_accumulates_on_run():
     assert run["llm_cost_usd"] == pytest.approx(0.03)
 
 
+
+
+async def test_llm_usage_summary_per_run():
+    await db.init_db()
+    run_id = await db.create_run("user_default", {})
+    other = await db.create_run("user_default", {})
+    await db.log_llm_call(run_id, "plan", "gemini-3.7-flash", 1000, 8000, 0.0)
+    await db.log_llm_call(run_id, "repair", "groq:openai/gpt-oss-120b", 2000, 500, 0.0)
+    await db.log_llm_call(run_id, "repair", "groq:openai/gpt-oss-120b", 1500, 400, 0.0)
+    await db.log_llm_call(other, "plan", "gemini-3.8-flash", 9, 9, 0.5)
+    usage = await db.llm_usage(run_id)
+    assert usage == {
+        "calls": 3, "input_tokens": 4500, "output_tokens": 8900, "cost_usd": 0.0,
+        "models": [{"model": "gemini-3.7-flash", "calls": 1, "tokens": 9000},
+                   {"model": "groq:openai/gpt-oss-120b", "calls": 2, "tokens": 4400}],
+    }
+    assert (await db.llm_usage("run_none"))["calls"] == 0

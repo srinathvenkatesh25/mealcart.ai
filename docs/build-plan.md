@@ -327,7 +327,7 @@ Pauses trigger a browser `Notification` and a sound, behind a `notify()` interfa
 | 5 | Shopper + verify | a 5-item list run 3 times gives an identical cart; coverage is all green |
 | 6 | Graph + API + websocket + registry + checkpointer | a full run via the API with a fake `email_code` pause; launch count == 1. **Done** (tests/test_api_run.py), plus approval survives a server restart |
 | 7 | Frontend | drive a whole run from the browser, with approval, swaps and pauses. **Done** (Next.js 16). LiveView dropped: Chrome opens on your own screen, so CAPTCHAs are solved there |
-| 8 | Hardening + fallbacks | retries, cost caps, README demo script, Developer Platform link, computer-use fallback |
+| 8 | Hardening + report | **Done:** USDA retries (earlier), per-run AI call cap and usage summary, realistic cooking-time floors, stricter product cuts, README demo script and troubleshooting, project report. **Not built:** Developer Platform link and computer-use fallback (optional) |
 
 ## 17. Tests
 

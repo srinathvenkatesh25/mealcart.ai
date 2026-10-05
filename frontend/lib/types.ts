@@ -133,6 +133,14 @@ export type ServerEvent = { seq: number; run_id: string } & (
   | { type: "run.failed"; error: string; detail: string[] }
 );
 
+export interface LlmUsage {
+  calls: number;
+  input_tokens: number;
+  output_tokens: number;
+  cost_usd: number;
+  models: { model: string; calls: number; tokens: number }[];
+}
+
 export interface RunRow {
   id: string;
   status: RunStatus;
@@ -143,4 +151,5 @@ export interface RunRow {
   error: string | null;
   open_hitl_event: { id: string; kind: HitlKind; payload: { prompt: string } } | null;
   last_seq: number;
+  llm_usage: LlmUsage;
 }

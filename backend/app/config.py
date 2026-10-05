@@ -13,8 +13,13 @@ class Settings(BaseSettings):
     # Tried in order when the current model's quota is used up or it's overloaded.
     # "model" = same provider as LLM_BASE_URL; "provider:model" = another provider
     # (groq, openrouter, ollama, gemini), using that provider's key below.
-    llm_fallbacks: str = "gemini-3.7-flash,gemini-3.5-flash,groq:openai/gpt-oss-120b"
+    # Entries whose provider has no key set are skipped, so listing more is harmless.
+    # Gemini's free tier gives each model its own daily quota, so more models = more runs a day.
+    llm_fallbacks: str = "gemini-3.7-flash,gemini-3.6-flash,gemini-3.5-flash,groq:openai/gpt-oss-120b"
     llm_max_tokens: int = 16000  # a 7-day plan is ~11k output tokens
+    # Hard stop on AI calls in one run, so a repair loop can't quietly burn a day's free quota.
+    # A normal run makes 5 to 10.
+    llm_max_calls_per_run: int = 40
     groq_api_key: str = ""
     openrouter_api_key: str = ""
     gemini_api_key: str = ""  # only needed if Gemini is a fallback rather than LLM_BASE_URL

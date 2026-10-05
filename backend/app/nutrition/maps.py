@@ -184,3 +184,18 @@ def exclusion_hits(ingredient: str, allergies: list[str], restrictions: list[str
 def canonical_key(name: str) -> str:
     """Merge spelling variants of one food: 'Eggs' and 'egg' -> 'egg'."""
     return "_".join(_tokens(name))
+
+
+def forbidden_terms(label: str, kind: str) -> list[str]:
+    """The ingredient words a restriction, allergy or dislike rules out, for the planner prompt.
+
+    The LLM is told "vegetarian" as the list of foods it excludes ("chicken, beef, ..."),
+    so it doesn't have to guess what the label means.
+    """
+    table = {"allergy": ALLERGEN_MAP, "restriction": RESTRICTION_MAP}.get(kind, {})
+    entry = table.get(normalize(label))
+    if entry:
+        return list(dict.fromkeys(entry["terms"]))
+    key = normalize(label)
+    base = key[3:] if key.startswith("no_") else key
+    return [base] + DISLIKE_SYNONYMS.get(singular(base), []) + DISLIKE_SYNONYMS.get(base, [])

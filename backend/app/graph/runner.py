@@ -53,10 +53,16 @@ class Runner:
         self.tasks: dict[str, asyncio.Task] = {}
 
     def _config(self, run_id: str) -> dict:
+        llm = self.deps.make_llm()
+        bus = self.registry.get(run_id).bus
+        if hasattr(llm, "on_event"):  # report model switches and rate-limit waits in the feed
+            async def report(message: str) -> None:
+                await bus.publish(events.progress(run_id, "model", message))
+            llm.on_event = report
         return {
             "configurable": {
                 "thread_id": run_id,
-                "llm": self.deps.make_llm(),
+                "llm": llm,
                 "lookup": self.deps.lookup,
                 "emit": self.registry.get(run_id).bus.publish,
                 "ask": self.registry.asker(run_id),

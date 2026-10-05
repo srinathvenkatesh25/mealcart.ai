@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useReducer, useRef } from "react";
 import { eventsUrl, getRun, startRun } from "./api";
 import type {
-  CartReport, DayTotals, GroceryList, HitlKind, MealPlan, MealSpec, Question, RunStatus, ServerEvent,
+  CartReport, DayTotals, GroceryList, HitlKind, LlmUsage, MealPlan, MealSpec, Question, RunStatus, ServerEvent,
 } from "./types";
 
 const RUN_KEY = "mealcart.runId";
@@ -29,11 +29,12 @@ export interface RunView {
   notice: string | null;
   connected: boolean;
   approved: boolean;
+  usage: LlmUsage | null;
 }
 
 const initial: RunView = {
   runId: null, status: "idle", spec: null, progress: [], plan: null, perDay: null, groceryList: null,
-  question: null, report: null, failure: null, notice: null, connected: false, approved: false,
+  question: null, report: null, failure: null, notice: null, connected: false, approved: false, usage: null,
 };
 
 type Action =
@@ -64,8 +65,9 @@ function reduce(state: RunView, action: Action): RunView {
         plan: state.plan ?? r.meal_plan_json,
         groceryList: state.groceryList ?? r.grocery_list_json,
         report: r.cart_report_json,
-        failure: r.status === "failed" ? { error: r.error ?? "failed", detail: [] } : null,
+        failure: state.failure ?? (r.status === "failed" ? { error: r.error ?? "failed", detail: [] } : null),
         approved: Boolean(r.cart_report_json) || state.approved,
+        usage: r.llm_usage ?? state.usage,
       };
     }
     case "connected":
@@ -166,6 +168,9 @@ export function useRun() {
         }
         if (event.type === "hitl.required") notifyIfHidden(event.prompt);
         dispatch({ type: "event", event });
+        if (event.type === "cart.ready" || event.type === "run.needs_attention" || event.type === "run.failed") {
+          getRun(runId).then((row) => row && dispatch({ type: "loaded", row })).catch(() => undefined);
+        }
       };
       socket.onclose = () => {
         if (ws.current !== socket) return;

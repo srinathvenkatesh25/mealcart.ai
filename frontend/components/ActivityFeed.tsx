@@ -4,7 +4,7 @@ import type { ProgressLine } from "@/lib/useRun";
 
 const STEP: Record<string, string> = {
   intake: "Targets", plan: "Planning", solve: "Portions", validate: "Checks", repair: "Fixing",
-  consolidate: "List", swap: "Swap", shop: "Instacart",
+  consolidate: "List", swap: "Swap", shop: "Instacart", model: "AI model",
 };
 
 // Newest first, so new lines appear at the top without scrolling the page.

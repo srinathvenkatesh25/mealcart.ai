@@ -98,3 +98,113 @@ def test_feasibility_warning():
     from app.intake.intake import feasibility_warnings
     s = MealSpec(zip_code="1", macros={"calories": 1500, "protein_g": 250})
     assert "67% of your calories" in feasibility_warnings(s)[0]
+
+
+def vegetarian_spec(**kw) -> MealSpec:
+    return MealSpec(zip_code="61801", days=1, include_snacks=False, protein_source="chicken",
+                    dietary_restrictions=["vegetarian"], macros={"calories": 2000, "protein_g": 150}, **kw)
+
+
+def test_main_protein_that_breaks_your_diet_is_dropped():
+    from app.intake.intake import resolve_conflicts
+    fixed, notes = resolve_conflicts(vegetarian_spec())
+    assert fixed.protein_source is None
+    assert notes == ["Main protein 'chicken' conflicts with your restriction 'vegetarian', so it was ignored. "
+                     "Meals will use other proteins."]
+    unchanged, none = resolve_conflicts(vegetarian_spec().model_copy(update={"protein_source": "paneer"}))
+    assert unchanged.protein_source == "paneer" and none == []
+
+
+def vegetarian_day():
+    from fakes import meal
+    from app.models import DayPlan
+    return DayPlan(day="Monday", meals=[
+        meal("breakfast", [("eggs", 150), ("onion", 50), ("vegetable_oil", 10)]),
+        meal("lunch", [("masoor_dal", 120), ("basmati_rice", 150), ("vegetable_oil", 10)]),
+        meal("dinner", [("masoor_dal", 120), ("basmati_rice", 150), ("onion", 50), ("vegetable_oil", 10)]),
+    ])
+
+
+async def test_conflict_is_reported_saved_and_kept_out_of_the_prompt():
+    # The plan is vegetarian, so it's valid for the diet; whether it also hits the calorie
+    # target isn't this test's business (repairs are scripted just in case).
+    llm = ScriptedLLM({"plan": [week(vegetarian_day())], "repair": [week(vegetarian_day())] * 3})
+    run_id, state, events = await run(vegetarian_spec(), llm)
+    assert state["spec"].protein_source is None
+    assert (await db.get_run(run_id))["meal_spec_json"]["protein_source"] is None
+    assert any("conflicts with your restriction 'vegetarian'" in e["message"] for e in events)
+    plan_prompt = llm.calls[0][1]  # user message; the system prompt is built from the resolved spec
+    assert "chicken" not in plan_prompt.lower()
+
+
+def test_prompt_spells_out_what_each_restriction_forbids():
+    from app.planner import prompts
+    system = prompts.planner_system(vegetarian_spec(dislikes=["mushrooms"]))
+    assert "vegetarian (diet):" in system and "chicken" in system.split("vegetarian (diet):")[1].split("\n")[0]
+    assert "mushrooms (dislike): mushrooms, shiitake" in system
+    assert "Main protein source" not in prompts.planner_system(
+        vegetarian_spec().model_copy(update={"protein_source": None}))
+
+
+async def test_oversized_repair_is_split_until_it_fits():
+    from app.planner.llm import LLMTooLargeError
+    days = ["Monday", "Tuesday", "Wednesday", "Thursday"]
+    plan = week(*[rough_day(d, extra=MUSHROOM) for d in days])
+    hints = [f"{d} lunch: 'button_mushrooms' violates dislike 'mushrooms' — replace it" for d in days]
+    llm = ScriptedLLM({"repair": [
+        LLMTooLargeError("too big"),                      # all four days: rejected
+        LLMTooLargeError("still too big"),                # Monday + Tuesday: rejected
+        week(rough_day("Monday")),                        # Monday alone
+        week(rough_day("Tuesday")),                       # Tuesday alone
+        week(rough_day("Wednesday"), rough_day("Thursday")),  # Wednesday + Thursday fit
+    ]})
+    fixed = await planner.repair(spec(days=4), plan, hints, llm)
+    sent = [u for _, u in llm.calls]
+    assert [sum(f"{d} problems:" in u for d in days) for u in sent] == [4, 2, 1, 1, 2]
+    assert all("button_mushrooms" not in str(d) for d in fixed.days)
+    assert [d.day for d in fixed.days] == days
+
+
+async def test_single_day_still_too_large_fails_clearly():
+    from app.planner.llm import LLMTooLargeError
+    llm = ScriptedLLM({"plan": [week(rough_day("Monday", extra=MUSHROOM))],
+                       "repair": [LLMTooLargeError("too big")]})
+    run_id, state, events = await run(spec(days=1), llm)
+    assert state["error"] == "llm_too_large"
+    assert (await db.get_run(run_id))["status"] == "failed" and events[-1]["error"] == "llm_too_large"
+
+
+async def test_oversized_plan_request_is_split_and_later_days_see_earlier_ones():
+    from app.planner.llm import LLMTooLargeError
+    llm = ScriptedLLM({"plan": [
+        LLMTooLargeError("too big"),                                # all four days
+        week(rough_day("Monday"), rough_day("Tuesday")),            # first half fits
+        week(rough_day("Wednesday"), rough_day("Thursday")),        # second half fits
+    ]})
+    plan = await planner.generate(spec(days=4), llm, days_per_call=4)
+    assert [d.day for d in plan.days] == ["Monday", "Tuesday", "Wednesday", "Thursday"]
+    assert "Earlier days already use" not in llm.calls[1][1]       # first half: nothing earlier
+    assert "Earlier days already use" in llm.calls[2][1]           # second half: told what's used
+
+
+def test_providers_without_keys_are_skipped():
+    from app.config import Settings
+    from app.planner.llm import build_targets
+    s = Settings(llm_api_key="g", llm_model="gemini-3.8-flash", groq_api_key="", openrouter_api_key="k",
+                 llm_fallbacks="gemini-3.7-flash,groq:openai/gpt-oss-120b,openrouter:x/y:free")
+    assert [t.label for t in build_targets(s)] == ["gemini-3.8-flash", "gemini-3.7-flash", "openrouter:x/y:free"]
+    s2 = s.model_copy(update={"groq_api_key": "k"})
+    assert "groq:openai/gpt-oss-120b" in [t.label for t in build_targets(s2)]
+
+
+async def test_graph_raises_unrealistic_meal_times_and_says_so():
+    from fakes import meal
+    quick = meal("lunch", [("chicken_breast", 200), ("basmati_rice", 100), ("vegetable_oil", 10)], prep_minutes=5)
+    plan_day = rough_day("Monday")
+    plan_day.meals[1] = quick
+    llm = ScriptedLLM({"plan": [week(plan_day)], "repair": [week(plan_day)] * 3})
+    run_id, state, events = await run(spec(days=1), llm)
+    lunch = state["meal_plan"].days[0].meals[1]
+    assert lunch.prep_minutes == 15 and "needs at least that long" in lunch.notes
+    assert any(e.get("message") == "Raised 1 meal time(s) to realistic cooking times" for e in events)
+    assert (await db.get_run(run_id))["meal_plan_json"]["days"][0]["meals"][1]["prep_minutes"] == 15

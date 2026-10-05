@@ -7,6 +7,7 @@ import CartReview from "@/components/CartReview";
 import GroceryList from "@/components/GroceryList";
 import PlanView from "@/components/PlanView";
 import QuestionCard from "@/components/QuestionCard";
+import UsageLine from "@/components/UsageLine";
 import { ApiError } from "@/lib/api";
 import type { MealSpec, SwapRequest } from "@/lib/types";
 import { useRun } from "@/lib/useRun";
@@ -20,6 +21,7 @@ const FAILURES: Record<string, string> = {
   plan_failed_validation: "The planner couldn't meet every rule after 3 tries.",
   llm_quota_exceeded: "Every AI model in your list is out of free quota or busy right now.",
   llm_bad_output: "The AI model kept returning an unreadable plan.",
+  llm_too_large: "The AI model on its free tier can't take a request this big, even split up.",
   cancelled_by_user: "You cancelled this plan. Nothing was added to your cart.",
   invalid_edit: "The edited grocery list couldn't be read.",
   HitlTimeoutError: "Nobody answered a question within 15 minutes, so the run stopped.",
@@ -106,13 +108,14 @@ export default function Home() {
                   {state.failure.detail.length > 0 && (
                     <ul>{state.failure.detail.slice(0, 6).map((d) => <li key={d}>{d}</li>)}</ul>
                   )}
+                  <UsageLine usage={state.usage} />
                   <button className="btn btn-primary" onClick={newRun}>Start a new plan</button>
                 </section>
               )}
 
               {state.report && (
                 <CartReview report={state.report} complete={state.status === "cart_ready"}
-                  budget={state.spec?.budget_weekly_usd ?? null} />
+                  budget={state.spec?.budget_weekly_usd ?? null} usage={state.usage} />
               )}
 
               {!state.plan && !state.failure && (

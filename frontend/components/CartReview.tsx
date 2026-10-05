@@ -1,13 +1,14 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import type { CartReport } from "@/lib/types";
+import type { CartReport, LlmUsage } from "@/lib/types";
+import UsageLine from "./UsageLine";
 
 const name = (s: string) => s.replace(/_/g, " ");
 const usd = (n: number) => `$${n.toFixed(2)}`;
 
-export default function CartReview({ report, complete, budget }: {
-  report: CartReport; complete: boolean; budget: number | null;
+export default function CartReview({ report, complete, budget, usage }: {
+  report: CartReport; complete: boolean; budget: number | null; usage: LlmUsage | null;
 }) {
   const heading = useRef<HTMLHeadingElement>(null);
   // The cart appears at the top of the page; bring it into view once, when it arrives.
@@ -69,6 +70,8 @@ export default function CartReview({ report, complete, budget }: {
       {report.notes.length > 0 && (
         <ul className="notes">{report.notes.map((n) => <li key={n}>{n}</li>)}</ul>
       )}
+
+      <UsageLine usage={usage} />
 
       <div className="checkout">
         <p>MealCart never checks out. Review the cart and pay in the Instacart app or your usual browser.</p>

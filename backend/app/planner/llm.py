@@ -4,8 +4,11 @@ Works with any OpenAI-compatible endpoint (Gemini free tier, local Ollama,
 Groq, OpenRouter...), so switching provider is a .env change.
 """
 
+import asyncio
 import json
+import logging
 import re
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import TypeVar
 
@@ -16,7 +19,14 @@ from pydantic import BaseModel, ValidationError
 from app import db
 from app.config import get_settings
 
+log = logging.getLogger(__name__)
+
 T = TypeVar("T", bound=BaseModel)
+
+# A rate limit that clears within this long (e.g. a per-minute token cap) is waited out
+# on the same model; a longer one (a used-up daily quota) moves on to the next model.
+MAX_SHORT_WAIT_S = 75
+MAX_SHORT_WAITS = 3
 
 # USD per 1M tokens (input, output). Free tiers are 0; add a row if you switch
 # to a paid model so runs.llm_cost_usd stays meaningful.
@@ -31,11 +41,52 @@ class LLMQuotaError(Exception):
     """The provider's rate limit or free-tier quota is used up."""
 
 
+class LLMTooLargeError(Exception):
+    """One request is bigger than the model accepts (e.g. Groq's free tier caps a request at 8,000 tokens).
+
+    Retrying the same request can't help; the caller must send less (see planner.repair).
+    """
+
+
+_RETRY_IN = re.compile(r"(?:try again|retry) in (?:(\d+)h)?(?:(\d+)m)?(\d+(?:\.\d+)?)s", re.I)
+
+
+def retry_after_seconds(e: openai.APIStatusError) -> float | None:
+    """How long the provider says to wait: the Retry-After header, else its message text."""
+    header = e.response.headers.get("retry-after") if e.response is not None else None
+    try:
+        if header:
+            return float(header)
+    except ValueError:
+        pass
+    m = _RETRY_IN.search(str(e))
+    if not m:
+        return None
+    h, mi, sec = m.groups()
+    return int(h or 0) * 3600 + int(mi or 0) * 60 + float(sec)
+
+
+def _fmt_wait(seconds: float) -> str:
+    total = int(seconds)
+    h, rem = divmod(total, 3600)
+    m, sec = divmod(rem, 60)
+    return "".join([f"{h}h" if h else "", f"{m}m" if m or h else "", f"{sec}s"])
+
+
+# Errors that mean "this model isn't usable for this account", not "this request is bad":
+# a wrong plan tier, an unknown model name, a rejected key. Move on to the next model.
+UNUSABLE = (openai.PermissionDeniedError, openai.NotFoundError, openai.AuthenticationError)
+
+
 def _why(e: Exception) -> str:
     if isinstance(e, openai.InternalServerError):
         return "overloaded"
-    wait = re.search(r"retry in ((?:\d+h)?(?:\d+m)?\d+)(?:\.\d+)?s", str(e))
-    return "quota used up" + (f", resets in {wait.group(1)}s" if wait else "")
+    if isinstance(e, openai.AuthenticationError):
+        return "API key rejected"
+    if isinstance(e, UNUSABLE):
+        return "not available on your account or plan"
+    wait = retry_after_seconds(e) if isinstance(e, openai.APIStatusError) else None
+    return "quota used up" + (f", resets in {_fmt_wait(wait)}" if wait is not None else "")
 
 
 PROVIDERS = {
@@ -91,7 +142,12 @@ class LLM:
         else:
             self.targets = build_targets(s)
         self.max_tokens = s.llm_max_tokens
+        self.max_calls = s.llm_max_calls_per_run
+        self.calls = 0
         self._current = 0
+        # Told about model switches and waits, so the page can explain a slow or odd run.
+        self.on_event: Callable[[str], Awaitable[None]] | None = None
+        self._sleep = asyncio.sleep
 
     @property
     def model(self) -> str:
@@ -113,15 +169,46 @@ class LLM:
     ) -> T:
         messages = [{"role": "system", "content": system}, {"role": "user", "content": user}]
         unavailable: list[str] = []
+        waits = 0
         while True:
+            self.calls += 1
+            if self.calls > self.max_calls:
+                raise LLMQuotaError(f"This run reached its limit of {self.max_calls} AI calls, which protects "
+                                    "your free quota. Start a new plan, or raise LLM_MAX_CALLS_PER_RUN in .env.")
             try:
                 return await self._structured_once(schema, messages, purpose, run_id, temperature)
-            except (openai.RateLimitError, openai.InternalServerError) as e:
-                unavailable.append(f"{self.targets[self._current].label}: {_why(e)}")
-                if self._current + 1 >= len(self.targets):
-                    raise LLMQuotaError("no model available — " + "; ".join(unavailable)
-                                        + ". Wait, or add entries to LLM_FALLBACKS in .env.") from e
-                self._current += 1  # stays on the working target for the rest of the run
+            except openai.RateLimitError as e:
+                delay = retry_after_seconds(e)
+                if delay is not None and delay <= MAX_SHORT_WAIT_S and waits < MAX_SHORT_WAITS:
+                    waits += 1
+                    await self._say(f"{self.targets[self._current].label} is rate-limited; "
+                                    f"waiting {_fmt_wait(delay + 1)} and trying again")
+                    await self._sleep(delay + 1)
+                    continue
+                await self._switch(e, unavailable)
+            except (openai.InternalServerError, *UNUSABLE) as e:
+                await self._switch(e, unavailable)
+            except openai.APIStatusError as e:
+                if e.status_code == 413:
+                    raise LLMTooLargeError(
+                        f"{self.targets[self._current].label} won't accept a request this large: {str(e)[:200]}"
+                    ) from e
+                raise
+
+    async def _say(self, message: str) -> None:
+        log.warning(message)
+        if self.on_event:
+            await self.on_event(message)
+
+    async def _switch(self, e: Exception, unavailable: list[str]) -> None:
+        """Move to the next model, or raise LLMQuotaError when none is left."""
+        label = self.targets[self._current].label
+        unavailable.append(f"{label}: {_why(e)}")
+        if self._current + 1 >= len(self.targets):
+            raise LLMQuotaError("no model available — " + "; ".join(unavailable)
+                                + ". Wait, or add entries to LLM_FALLBACKS in .env.") from e
+        self._current += 1  # stays on the working target for the rest of the run
+        await self._say(f"{label}: {_why(e)}. Switching to {self.targets[self._current].label}")
 
     async def _structured_once(self, schema: type[T], messages: list[dict], purpose: str,
                                run_id: str | None, temperature: float) -> T:

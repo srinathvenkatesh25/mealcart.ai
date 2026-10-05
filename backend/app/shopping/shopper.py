@@ -59,6 +59,9 @@ Indian staples). Avoid membership warehouse clubs (bulk sizes), pharmacies, and 
 PICK_SYSTEM = """You match grocery items to products in a store's search results. Reply only with JSON.
 For each item choose the candidate that IS that food in a plain, ordinary form:
 - brand and package size may differ; prefer store brands and better value;
+- match the cut or type the item names: "breast" is not "thigh", "ground" is not "whole", "toor dal" is
+  not "masoor dal". Prefer a product whose name states the cut. Take an unspecified one (e.g. just
+  "boneless chicken") only when no candidate names it;
 - never a ready meal, sauce, mix or snack made from it (e.g. "Palak Paneer" is not paneer);
 - never an ingredient that merely appears alongside it in results;
 - if no candidate is that food, use null.

@@ -9,3 +9,5 @@ profiles/
 node_modules/
 .next/
 .DS_Store
+*.db-shm
+*.db-wal
