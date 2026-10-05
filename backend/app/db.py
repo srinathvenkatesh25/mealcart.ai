@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS runs (
   meal_plan_json TEXT,
   grocery_list_json TEXT,
   cart_report_json TEXT,
+  nutrition_json TEXT,               -- per-day and per-meal calories/macros, for display
   error TEXT,
   llm_cost_usd REAL NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL,
@@ -73,7 +74,7 @@ CREATE TABLE IF NOT EXISTS price_history (
 CREATE INDEX IF NOT EXISTS idx_price_history_item ON price_history(user_id, item);
 """
 
-RUN_JSON_FIELDS = ("meal_spec_json", "meal_plan_json", "grocery_list_json", "cart_report_json")
+RUN_JSON_FIELDS = ("meal_spec_json", "meal_plan_json", "grocery_list_json", "cart_report_json", "nutrition_json")
 
 
 def _now() -> str:
@@ -87,6 +88,11 @@ def _db_path() -> str:
 async def init_db() -> None:
     async with aiosqlite.connect(_db_path()) as db:
         await db.executescript(SCHEMA)
+        # Databases created before a column existed keep working: add what's missing.
+        async with db.execute("PRAGMA table_info(runs)") as cur:
+            have = {row[1] for row in await cur.fetchall()}
+        if "nutrition_json" not in have:
+            await db.execute("ALTER TABLE runs ADD COLUMN nutrition_json TEXT")
         await db.execute(
             "INSERT OR IGNORE INTO users (id, created_at) VALUES (?, ?)",
             (get_settings().single_user_id, _now()),

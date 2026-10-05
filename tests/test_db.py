@@ -82,3 +82,23 @@ async def test_llm_usage_summary_per_run():
                    {"model": "groq:openai/gpt-oss-120b", "calls": 2, "tokens": 4400}],
     }
     assert (await db.llm_usage("run_none"))["calls"] == 0
+
+
+async def test_database_created_before_nutrition_column_is_upgraded(tmp_path, monkeypatch):
+    import sqlite3
+    path = tmp_path / "old.db"
+    con = sqlite3.connect(path)
+    con.executescript("""CREATE TABLE users (id TEXT PRIMARY KEY, created_at TEXT NOT NULL);
+        CREATE TABLE runs (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, status TEXT NOT NULL,
+          meal_spec_json TEXT NOT NULL, meal_plan_json TEXT, grocery_list_json TEXT, cart_report_json TEXT,
+          error TEXT, llm_cost_usd REAL NOT NULL DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+        INSERT INTO users VALUES ('user_default', 'x');
+        INSERT INTO runs VALUES ('run_old', 'user_default', 'cart_ready', '{}', NULL, NULL, NULL, NULL, 0, 'x', 'x');""")
+    con.commit(); con.close()
+    monkeypatch.setenv("DATABASE_PATH", str(path))
+    get_settings.cache_clear()
+    await db.init_db()
+    await db.init_db()                                   # and again: nothing to add the second time
+    assert (await db.get_run("run_old"))["nutrition_json"] is None      # the old run still loads
+    await db.update_run("run_old", nutrition_json={"per_day": {"Monday": {"calories": 1}}, "per_meal": {}})
+    assert (await db.get_run("run_old"))["nutrition_json"]["per_day"]["Monday"]["calories"] == 1

@@ -7,34 +7,36 @@ from app.shopping.instacart import CartEntry
 COVERAGE_SLACK = 0.98
 
 
-def build_report(store: str, grocery_list: GroceryList, cart: list[CartEntry],
-                 chosen: dict[str, tuple[str, float, str | None]], budget: float | None,
+def build_report(grocery_list: GroceryList, carts: dict[str, list[CartEntry]],
+                 chosen: dict[str, tuple[str, str, float, str | None]], budget: float | None,
                  notes: list[str]) -> tuple[CartReport, bool]:
-    """`chosen` maps grocery item → (product name, pack grams, substituted_for).
+    """`carts` maps store name → its cart as Instacart shows it; `chosen` maps grocery item →
+    (store name, product name, pack grams, substituted_for).
 
-    Returns the report and whether every item is covered. Cart lines that match
-    no item on the list are reported in notes (e.g. kept from before the run).
+    Returns the report and whether every item is covered. Cart lines that match no item
+    on the list are reported in notes (e.g. kept from before the run).
     """
-    by_product = {e.name: e for e in cart}
     lines, coverage = [], []
     for item in grocery_list.items:
         pick = chosen.get(item.name)
-        entry = by_product.get(pick[0]) if pick else None
-        grams = entry.quantity * pick[1] if entry and pick[1] else 0.0
-        covered = entry is not None and (grams >= item.total_grams * COVERAGE_SLACK or not pick[1])
-        coverage.append(CoverageRow(item=item.name, grams_needed=item.total_grams,
-                                    grams_in_cart=round(grams, 1), covered=covered))
+        entry = next((e for e in carts.get(pick[0], []) if e.name == pick[1]), None) if pick else None
+        grams = entry.quantity * pick[2] if entry and pick[2] else 0.0
+        covered = entry is not None and (grams >= item.total_grams * COVERAGE_SLACK or not pick[2])
+        coverage.append(CoverageRow(item=item.name, grams_needed=item.total_grams, grams_in_cart=round(grams, 1),
+                                    covered=covered, store=pick[0] if entry else ""))
         if entry:
             line_total = entry.line_price or 0.0
             lines.append(CartLine(
-                product_name=entry.name, pack_size=entry.size, pack_grams=pick[1] or 0.0,
+                product_name=entry.name, pack_size=entry.size, pack_grams=pick[2] or 0.0,
                 packs=int(entry.quantity), unit_price_usd=round(line_total / max(entry.quantity, 1), 2),
-                line_total_usd=line_total, grocery_item=item.name, substituted_for=pick[2],
+                line_total_usd=line_total, grocery_item=item.name, substituted_for=pick[3], store=pick[0],
             ))
-    matched = {line.product_name for line in lines}
-    notes = notes + [f"Also in cart (not on the list): {e.name}" for e in cart if e.name not in matched]
-    subtotal = round(sum(e.line_price or 0.0 for e in cart), 2)
+    for store, cart in carts.items():
+        matched = {line.product_name for line in lines if line.store == store}
+        notes = notes + [f"Also in your {store} cart (not on the list): {e.name}" for e in cart if e.name not in matched]
+    subtotals = {store: round(sum(e.line_price or 0.0 for e in cart), 2) for store, cart in carts.items()}
+    subtotal = round(sum(subtotals.values()), 2)
     over = round(subtotal - budget, 2) if budget is not None and subtotal > budget else None
-    report = CartReport(store=store, lines=lines, coverage=coverage, subtotal_usd=subtotal,
-                        over_budget_by_usd=over, notes=notes)
+    report = CartReport(store=" + ".join(carts), stores=list(carts), subtotals=subtotals, lines=lines,
+                        coverage=coverage, subtotal_usd=subtotal, over_budget_by_usd=over, notes=notes)
     return report, all(c.covered for c in coverage)

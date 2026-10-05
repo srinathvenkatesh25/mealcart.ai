@@ -62,31 +62,43 @@ def cand(i, name, size, price, grams, in_stock=True):
 
 
 class FakeSite:
-    """A store whose search results and cart live in memory."""
+    """Stores whose search results and carts live in memory; one cart per store, like Instacart."""
 
-    def __init__(self, catalog: dict[tuple[str, str], list[Candidate]], cart: list[CartEntry] | None = None):
+    def __init__(self, catalog: dict[tuple[str, str], list[Candidate]], cart: list[CartEntry] | None = None,
+                 cart_store: str = "quicklly-grocery"):
         self.catalog = catalog
-        self.cart: dict[str, CartEntry] = {e.name: e for e in (cart or [])}
+        self.carts: dict[str, dict[str, CartEntry]] = {}
+        if cart:
+            self.carts[cart_store] = {e.name: e for e in cart}
         self.prices = {c.name: c for cs in catalog.values() for c in cs}
         self.adds: list[tuple[str, int]] = []
+        self.adds_at: list[tuple[str, str]] = []          # (store, product)
         self.delivery_zip: str | None = "12345"
 
+    @property
+    def cart(self) -> dict[str, CartEntry]:
+        """Every store's cart together (product names are unique in these tests)."""
+        return {n: e for c in self.carts.values() for n, e in c.items()}
+
     async def list_stores(self):
-        return [("meijer", "Meijer"), ("quicklly-grocery", "Quicklly Indian Grocery"), ("cvs", "CVS")]
+        return [("meijer", "Meijer"), ("quicklly-grocery", "Quicklly Indian Grocery"), ("hmart", "HMart"),
+                ("aldi", "ALDI"), ("cvs", "CVS")]
 
     async def search(self, store, query, item, limit=8):
         return self.catalog.get((store, query), [])
 
     async def add(self, store, query, product_name, packs):
         self.adds.append((product_name, packs))
+        self.adds_at.append((store, product_name))
         c = self.prices[product_name]
-        e = self.cart.get(product_name)
+        cart = self.carts.setdefault(store, {})
+        e = cart.get(product_name)
         qty = max(packs, e.quantity if e else 0)
-        self.cart[product_name] = CartEntry(product_name, c.size, round(c.price * qty, 2), qty, "ct")
+        cart[product_name] = CartEntry(product_name, c.size, round(c.price * qty, 2), qty, "ct")
         return qty
 
     async def cart_lines(self, store):
-        return list(self.cart.values())
+        return list(self.carts.get(store, {}).values())
 
     async def clear_cart(self, store):
-        self.cart.clear()
+        self.carts.get(store, {}).clear()

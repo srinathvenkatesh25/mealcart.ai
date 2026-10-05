@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useReducer, useRef } from "react";
 import { eventsUrl, getRun, startRun } from "./api";
 import type {
-  CartReport, DayTotals, GroceryList, HitlKind, LlmUsage, MealPlan, MealSpec, Question, RunStatus, ServerEvent,
+  CartReport, DayTotals, GroceryList, HitlKind, LlmUsage, MealNutrition, MealPlan, MealSpec, Question, RunStatus,
+  ServerEvent,
 } from "./types";
 
 const RUN_KEY = "mealcart.runId";
@@ -22,6 +23,7 @@ export interface RunView {
   progress: ProgressLine[];
   plan: MealPlan | null;
   perDay: Record<string, DayTotals> | null;
+  perMeal: Record<string, MealNutrition[]> | null;
   groceryList: GroceryList | null;
   question: Question | null;
   report: CartReport | null;
@@ -33,7 +35,7 @@ export interface RunView {
 }
 
 const initial: RunView = {
-  runId: null, status: "idle", spec: null, progress: [], plan: null, perDay: null, groceryList: null,
+  runId: null, status: "idle", spec: null, progress: [], plan: null, perDay: null, perMeal: null, groceryList: null,
   question: null, report: null, failure: null, notice: null, connected: false, approved: false, usage: null,
 };
 
@@ -63,6 +65,8 @@ function reduce(state: RunView, action: Action): RunView {
         status: r.status,
         spec: r.meal_spec_json,
         plan: state.plan ?? r.meal_plan_json,
+        perDay: state.perDay ?? r.nutrition_json?.per_day ?? null,
+        perMeal: state.perMeal ?? r.nutrition_json?.per_meal ?? null,
         groceryList: state.groceryList ?? r.grocery_list_json,
         report: r.cart_report_json,
         failure: state.failure ?? (r.status === "failed" ? { error: r.error ?? "failed", detail: [] } : null),
@@ -82,7 +86,7 @@ function reduce(state: RunView, action: Action): RunView {
         case "run.progress":
           return { ...state, progress: [...state.progress, { seq: e.seq, node: e.node, message: e.message }] };
         case "plan.ready":
-          return { ...state, plan: e.meal_plan, perDay: e.per_day, groceryList: e.grocery_list };
+          return { ...state, plan: e.meal_plan, perDay: e.per_day, perMeal: e.per_meal, groceryList: e.grocery_list };
         case "hitl.required":
           return {
             ...state, status: "awaiting_hitl",

@@ -65,6 +65,29 @@ export interface DayTotals {
   protein_g_delta: number;
 }
 
+export interface IngredientNutrition {
+  name: string;
+  grams: number;
+  calories: number;
+  protein_g: number;
+  carbs_g: number;
+  fat_g: number;
+}
+
+export interface MealNutrition {
+  slot: Slot;
+  calories: number;
+  protein_g: number;
+  carbs_g: number;
+  fat_g: number;
+  ingredients: IngredientNutrition[];
+}
+
+export interface Nutrition {
+  per_day: Record<string, DayTotals>;
+  per_meal: Record<string, MealNutrition[]>;
+}
+
 export interface GroceryItem {
   name: string;
   total_grams: number;
@@ -87,6 +110,7 @@ export interface CartLine {
   line_total_usd: number;
   grocery_item: string;
   substituted_for: string | null;
+  store?: string;
 }
 
 export interface CoverageRow {
@@ -94,10 +118,13 @@ export interface CoverageRow {
   grams_needed: number;
   grams_in_cart: number;
   covered: boolean;
+  store?: string;
 }
 
 export interface CartReport {
   store: string;
+  stores?: string[];
+  subtotals?: Record<string, number>;
   lines: CartLine[];
   coverage: CoverageRow[];
   subtotal_usd: number;
@@ -124,7 +151,10 @@ export type PlanApprovalValue = "approved" | "rejected" | { edit: GroceryList } 
 
 export type ServerEvent = { seq: number; run_id: string } & (
   | { type: "run.progress"; node: string; message: string }
-  | { type: "plan.ready"; meal_plan: MealPlan; per_day: Record<string, DayTotals>; grocery_list: GroceryList }
+  | {
+      type: "plan.ready"; meal_plan: MealPlan; per_day: Record<string, DayTotals>;
+      per_meal: Record<string, MealNutrition[]>; grocery_list: GroceryList;
+    }
   | ({ type: "hitl.required" } & Question)
   | { type: "hitl.resolved"; event_id: string; kind: HitlKind }
   | { type: "hitl.rejected"; kind: HitlKind; reason: string }
@@ -148,6 +178,7 @@ export interface RunRow {
   meal_plan_json: MealPlan | null;
   grocery_list_json: GroceryList | null;
   cart_report_json: CartReport | null;
+  nutrition_json: Nutrition | null;
   error: string | null;
   open_hitl_event: { id: string; kind: HitlKind; payload: { prompt: string } } | null;
   last_seq: number;

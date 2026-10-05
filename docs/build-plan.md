@@ -266,6 +266,11 @@ Every failure produces one mechanical hint naming the day, meal and biggest cont
 5. **Idempotent add:** read the cart line for this product first, then click "Add" until the quantity equals `packs`. Re-read to confirm. Retry once, then flag the item.
 6. Send `run.progress` ("Added chicken thighs 2 × 1.5 lb — $13.98") and record the price in `price_history`.
 
+**More than one store:** stores are ranked by the probe. Items the first store lacks are searched at
+the next store, and so on, up to `MAX_STORES` (3), each a separate Instacart cart with its own fee and
+minimum. Substitutes are tried only for items no store had. The report groups lines by store, with
+per-store subtotals.
+
 **Verify (Phase C, `verify.py`):**
 - Scrape the whole cart and map each line to a GroceryItem.
 - Build `coverage` (grams needed vs grams in cart).

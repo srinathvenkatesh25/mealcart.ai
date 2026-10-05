@@ -1,4 +1,4 @@
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -94,6 +94,7 @@ class CartLine(BaseModel):
     line_total_usd: float
     grocery_item: str
     substituted_for: str | None = None
+    store: str = ""            # which store's cart this line is in
 
 
 class CoverageRow(BaseModel):
@@ -101,10 +102,13 @@ class CoverageRow(BaseModel):
     grams_needed: float
     grams_in_cart: float
     covered: bool
+    store: str = ""            # where it was bought; empty when not found
 
 
 class CartReport(BaseModel):
-    store: str
+    store: str                 # display name: "A" or "A + B"
+    stores: list[str] = []     # every store with a cart, best first
+    subtotals: dict[str, float] = {}
     lines: list[CartLine]
     coverage: list[CoverageRow]
     subtotal_usd: float
@@ -117,6 +121,9 @@ class ValidationResult(BaseModel):
     passed: bool
     # per day: calories, protein_g (gated) and carbs_g, fat_g (informational)
     per_day: dict[str, dict[str, float]]
+    # day -> one entry per meal, in plan order: {slot, calories, protein_g, carbs_g, fat_g,
+    # ingredients: [{name, grams, calories, protein_g, carbs_g, fat_g}]}. For display and checking.
+    per_meal: dict[str, list[dict[str, Any]]] = {}
     deltas: list[str] = []
 
 

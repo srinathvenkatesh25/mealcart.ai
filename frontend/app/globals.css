@@ -635,6 +635,13 @@ input[type="checkbox"] {
   text-underline-offset: 3px;
 }
 
+.meal-macros {
+  grid-column: 2 / -1;
+  font-family: var(--font-data);
+  font-size: 0.75rem;
+  color: var(--steel);
+}
+
 .meal-time {
   font-family: var(--font-data);
   font-size: 0.75rem;
@@ -642,7 +649,7 @@ input[type="checkbox"] {
 }
 
 .meal-body {
-  padding: 6px 0 4px 82px;
+  padding: 6px 0 4px;
   font-size: 0.875rem;
 }
 
@@ -654,6 +661,59 @@ input[type="checkbox"] {
 
 .ingredients {
   list-style: none;
+}
+
+/* Day cards can be narrow, so an ingredient's numbers sit on their own line under its name. */
+.ingredients li {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr);
+  column-gap: 8px;
+  align-items: baseline;
+  padding: 2px 0;
+}
+
+.ing-macros {
+  grid-column: 2;
+  font-family: var(--font-data);
+  font-size: 0.75rem;
+  color: var(--steel);
+}
+
+/* The same four numbers as the day's label, for one meal. Carbs and fat are information only. */
+.macro-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 4px 12px;
+  margin: 2px 0 10px;
+  padding: 6px 0;
+  border-top: 4px solid var(--ink);
+  border-bottom: 1px solid var(--ink);
+}
+
+.macro-strip div {
+  display: flex;
+  flex-direction: column;
+}
+
+.macro-strip dt {
+  font-size: 0.6875rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.macro-strip dd {
+  margin: 0;
+  white-space: nowrap;
+  font-size: 1rem;
+  font-weight: 900;
+  font-variant-numeric: tabular-nums;
+}
+
+.macro-strip .minor dt,
+.macro-strip .minor dd {
+  color: var(--steel);
+  font-weight: 600;
 }
 
 .grams {
@@ -689,6 +749,13 @@ input[type="checkbox"] {
   transition: opacity 120ms;
 }
 
+/* With a meal open, Swap moves below it instead of covering its last line. */
+.meal:has(details[open]) .swap-trigger {
+  position: static;
+  opacity: 1;
+  margin-top: 4px;
+}
+
 .meal:hover .swap-trigger,
 .meal:focus-within .swap-trigger,
 .swap-trigger:focus-visible {
@@ -700,6 +767,10 @@ input[type="checkbox"] {
     position: static;
     opacity: 1;
     margin-left: 82px;
+  }
+
+  .meal:has(details[open]) .swap-trigger {
+    margin-left: 0;
   }
 }
 
@@ -930,6 +1001,14 @@ input[type="checkbox"] {
   font-weight: 800;
 }
 
+.receipt .store-row th,
+.receipt .store-row td {
+  padding-top: 16px;
+  font-weight: 900;
+  font-size: 1rem;
+  border-bottom: 2px solid var(--ink);
+}
+
 .tick {
   display: inline-block;
   width: 20px;
@@ -1090,6 +1169,11 @@ input[type="checkbox"] {
   .receipt td {
     border: 0;
     padding: 2px 0;
+  }
+
+  .receipt .store-row {
+    display: flex;
+    justify-content: space-between;
   }
 
   .receipt td:nth-child(2) {

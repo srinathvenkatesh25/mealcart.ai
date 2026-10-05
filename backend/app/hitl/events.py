@@ -2,7 +2,7 @@
 
 Server → client message types:
   run.progress     {node, message}
-  plan.ready       {meal_plan, per_day, grocery_list}
+  plan.ready       {meal_plan, per_day, per_meal, grocery_list}
   hitl.required    {event_id, kind, prompt, data?, screenshot_b64?}
   hitl.resolved    {event_id, kind}            (never the answer itself)
   cart.ready       {report}
@@ -31,8 +31,9 @@ def failed(run_id: str, error: str, detail: list[str]) -> Event:
     return {"type": "run.failed", "run_id": run_id, "error": error, "detail": detail}
 
 
-def plan_ready(run_id: str, meal_plan: dict, per_day: dict, grocery_list: dict) -> Event:
+def plan_ready(run_id: str, meal_plan: dict, per_day: dict, per_meal: dict, grocery_list: dict) -> Event:
     return {"type": "plan.ready", "run_id": run_id, "meal_plan": meal_plan, "per_day": per_day,
+            "per_meal": per_meal,
             "grocery_list": grocery_list}
 
 

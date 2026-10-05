@@ -57,7 +57,8 @@ def shopping_llm(sub_index=0):
             shopper.Pick(item="paneer", index=1),       # not the tikka masala
             shopper.Pick(item="masoor_dal", index=0),   # out of stock -> substitute
         ])],
-        "substitute": [shopper.Picks(picks=[shopper.Pick(item="masoor_dal -> toor_dal", index=sub_index)])],
+        "substitute": [shopper.Picks(picks=[shopper.Pick(item="masoor_dal -> toor_dal @ quicklly-grocery",
+                                                           index=sub_index)])],
     })
 
 
@@ -83,22 +84,23 @@ async def test_declined_substitution_leaves_item_uncovered():
     report, complete, _, _ = await run(FakeSite(CATALOG), shopping_llm(), {"substitution_approval": "no"})
     assert not complete
     assert [c.item for c in report.coverage if not c.covered] == ["masoor_dal"]
-    assert "Unavailable at Quicklly Indian Grocery: masoor_dal" in report.notes
+    # Not at the first store, not at the second, and the substitute was declined.
+    assert "Not found at Quicklly Indian Grocery, Meijer: masoor_dal" in report.notes
 
 
 async def test_existing_cart_asks_before_clearing():
     old = CartEntry("Oreo Cookies", "13 oz", 4.99, 1, "ct")
     site = FakeSite(CATALOG, cart=[old])
     _, _, asked, events = await run(site, shopping_llm(), {"cart_clear_approval": "clear", "substitution_approval": "yes"})
-    assert asked[0] == "cart_clear_approval" and "Cleared the existing cart" in events
+    assert asked[0] == "cart_clear_approval" and "Cleared the existing Quicklly Indian Grocery cart" in events
     assert "Oreo Cookies" not in site.cart
 
 
 async def test_kept_cart_items_are_reported_not_counted():
     site = FakeSite(CATALOG, cart=[CartEntry("Oreo Cookies", "13 oz", 4.99, 1, "ct")])
     report, _, _, _ = await run(site, shopping_llm(), {"cart_clear_approval": "keep", "substitution_approval": "yes"})
-    assert "Also in cart (not on the list): Oreo Cookies" in report.notes
-    assert "Kept 1 item(s) already in the cart" in report.notes
+    assert "Also in your Quicklly Indian Grocery cart (not on the list): Oreo Cookies" in report.notes
+    assert "Kept 1 item(s) already in your Quicklly Indian Grocery cart" in report.notes
 
 
 async def test_rerun_does_not_double_add():
@@ -138,3 +140,76 @@ async def test_no_warning_when_zip_matches_or_is_unknown():
         site.delivery_zip = seen
         report, _, _, events = await run(site, shopping_llm(), {"substitution_approval": "yes"})
         assert not any("deliver to" in n for n in report.notes) and not any("deliver to" in e for e in events)
+
+
+# ---- shopping across stores -------------------------------------------------------------------
+
+SPLIT_CATALOG = {   # Quicklly has the chicken and paneer but no masoor dal; HMart has the dal.
+    ("quicklly-grocery", "paneer"): [cand(0, "Nanak Paneer", "12 oz", 8.79, 340.2)],
+    ("quicklly-grocery", "chicken breast"): [cand(0, "Halal Chicken Breast", "2 lb", 9.99, 907.2)],
+    ("hmart", "masoor dal"): [cand(0, "Laxmi Masoor Dal", "2 lb", 4.49, 907.2)],
+}
+
+
+def split_llm():
+    return ScriptedLLM({
+        "store": [shopper.StoreShortlist(stores=["quicklly-grocery", "hmart"], hard_items=["paneer"], reason="")],
+        "probe": [shopper.Picks(picks=[shopper.Pick(item="quicklly-grocery: paneer", index=0)])],
+        "pick": [
+            shopper.Picks(picks=[shopper.Pick(item="chicken_breast", index=0), shopper.Pick(item="paneer", index=0)]),
+            shopper.Picks(picks=[shopper.Pick(item="masoor_dal", index=0)]),     # at HMart
+        ],
+    })
+
+
+async def test_items_the_first_store_lacks_are_bought_at_the_next_store():
+    site, llm = FakeSite(SPLIT_CATALOG), split_llm()
+    report, complete, asked, events = await run(site, llm)
+
+    assert complete and all(c.covered for c in report.coverage)
+    assert site.adds_at == [("quicklly-grocery", "Halal Chicken Breast"), ("quicklly-grocery", "Nanak Paneer"),
+                            ("hmart", "Laxmi Masoor Dal")]
+    assert "Not found yet: masoor_dal. Looking at HMart" in events and "HMart has masoor_dal" in events
+    assert "Added at HMart: Laxmi Masoor Dal (2 lb) × 1 — $4.49" in events
+    assert report.store == "Quicklly Indian Grocery + HMart"
+    assert report.stores == ["Quicklly Indian Grocery", "HMart"]
+    assert report.subtotals == {"Quicklly Indian Grocery": 28.77, "HMart": 4.49}
+    assert report.subtotal_usd == pytest.approx(33.26)
+    assert {c.item: c.store for c in report.coverage} == {
+        "chicken_breast": "Quicklly Indian Grocery", "paneer": "Quicklly Indian Grocery", "masoor_dal": "HMart"}
+    assert [line.store for line in report.lines] == ["Quicklly Indian Grocery", "Quicklly Indian Grocery", "HMart"]
+    assert report.notes[0].startswith("Your list is split across 2 stores (Quicklly Indian Grocery, HMart).")
+    assert [p for p, _ in llm.calls] == ["store", "probe", "pick", "pick"]   # no substitute needed
+    assert asked == []
+
+
+async def test_a_store_with_everything_is_the_only_store():
+    catalog = {**SPLIT_CATALOG, ("quicklly-grocery", "masoor dal"): [cand(0, "Rani Masoor Dal", "2 lb", 5.49, 907.2)]}
+    llm = split_llm()
+    llm.replies["pick"] = [shopper.Picks(picks=[shopper.Pick(item=i, index=0)
+                                                for i in ("chicken_breast", "paneer", "masoor_dal")])]
+    site = FakeSite(catalog)
+    report, complete, _, events = await run(site, llm)
+    assert complete and report.stores == ["Quicklly Indian Grocery"] and report.store == "Quicklly Indian Grocery"
+    assert not any(e.startswith("Not found yet") for e in events)
+    assert {s for s, _ in site.adds_at} == {"quicklly-grocery"}
+    assert not any("split across" in n for n in report.notes)
+
+
+async def test_never_more_stores_than_the_limit(monkeypatch):
+    monkeypatch.setattr(shopper, "MAX_STORES", 1)
+    site, llm = FakeSite(SPLIT_CATALOG), split_llm()
+    report, complete, _, events = await run(site, llm)
+    assert not complete
+    assert not any("Looking at HMart" in e for e in events) and "hmart" not in {s for s, _ in site.adds_at}
+    assert "Not found at Quicklly Indian Grocery: masoor_dal" in report.notes
+
+
+async def test_second_store_cart_is_asked_about_before_it_is_used():
+    old = CartEntry("Old Chips", "8 oz", 2.99, 1, "ct")
+    site = FakeSite(SPLIT_CATALOG, cart=[old], cart_store="hmart")
+    report, complete, asked, _ = await run(site, split_llm(), {"cart_clear_approval": "keep"})
+    assert asked == ["cart_clear_approval"] and complete
+    assert "Kept 1 item(s) already in your HMart cart" in report.notes
+    assert "Also in your HMart cart (not on the list): Old Chips" in report.notes
+    assert report.subtotals["HMart"] == pytest.approx(4.49 + 2.99)   # the kept item is in that cart's total

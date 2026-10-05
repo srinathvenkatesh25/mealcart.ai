@@ -106,6 +106,7 @@ async def check(plan: MealPlan, spec: MealSpec, lookup: MacroLookup) -> Validati
     targets = {"calories": spec.macros.calories, "protein_g": spec.macros.protein_g}
     deltas: list[str] = []
     per_day: dict[str, dict[str, float]] = {}
+    per_meal: dict[str, list[dict]] = {}
 
     if len(plan.days) != spec.days:
         deltas.append(f"plan has {len(plan.days)} days, expected {spec.days}")
@@ -116,8 +117,11 @@ async def check(plan: MealPlan, spec: MealSpec, lookup: MacroLookup) -> Validati
         totals = {"calories": 0.0, "protein_g": 0.0, "carbs_g": 0.0, "fat_g": 0.0}
         contrib: dict[str, dict[str, float]] = {}
         unknown = False
+        day_meals: list[dict] = []
 
         for meal in day.meals:
+            meal_totals = dict.fromkeys(totals, 0.0)
+            rows: list[dict] = []
             for ing in meal.ingredients:
                 if ing.name not in cache:
                     try:
@@ -133,10 +137,17 @@ async def check(plan: MealPlan, spec: MealSpec, lookup: MacroLookup) -> Validati
                     )
                     continue
                 c = contrib.setdefault(ing.name, dict.fromkeys(totals, 0.0))
+                row = {"name": ing.name, "grams": ing.grams}
                 for k in totals:
                     amount = ing.grams / 100.0 * getattr(macros, k)
                     totals[k] += amount
+                    meal_totals[k] += amount
                     c[k] += amount
+                    row[k] = round(amount, 1)
+                rows.append(row)
+            day_meals.append({"slot": meal.slot, **{k: round(v, 1) for k, v in meal_totals.items()},
+                              "ingredients": rows})
+        per_meal[day.day] = day_meals
 
         per_day[day.day] = {
             **{k: round(v, 1) for k, v in totals.items()},
@@ -152,4 +163,4 @@ async def check(plan: MealPlan, spec: MealSpec, lookup: MacroLookup) -> Validati
         deltas += _meal_rule_hints(day, spec)
 
     deltas += _variety_hints(plan)
-    return ValidationResult(passed=not deltas, per_day=per_day, deltas=deltas)
+    return ValidationResult(passed=not deltas, per_day=per_day, per_meal=per_meal, deltas=deltas)

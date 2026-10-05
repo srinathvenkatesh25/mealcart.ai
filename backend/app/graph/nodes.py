@@ -67,6 +67,8 @@ async def solve(state: RunState, config: RunnableConfig) -> RunState:
 async def validate(state: RunState, config: RunnableConfig) -> RunState:
     _, lookup, emit = _deps(config)
     result = await validator.check(state["meal_plan"], state["spec"], lookup)
+    # Saved with the run so a reloaded page can show the same numbers.
+    await db.update_run(state["run_id"], nutrition_json={"per_day": result.per_day, "per_meal": result.per_meal})
     msg = "Plan passed every check" if result.passed else f"{len(result.deltas)} problem(s) found"
     await emit(events.progress(state["run_id"], "validate", msg))
     return {"validation": result}
@@ -100,6 +102,7 @@ async def consolidate(state: RunState, config: RunnableConfig) -> RunState:
     est = f", est. ${grocery_list.est_total_usd:.2f}" if grocery_list.est_total_usd is not None else ""
     await emit(events.progress(run_id, "consolidate", f"Grocery list ready: {len(grocery_list.items)} items{est}"))
     await emit(events.plan_ready(run_id, state["meal_plan"].model_dump(), state["validation"].per_day,
+                                 state["validation"].per_meal,
                                  grocery_list.model_dump()))
     return {"grocery_list": grocery_list}
 

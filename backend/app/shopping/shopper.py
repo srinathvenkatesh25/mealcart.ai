@@ -1,11 +1,17 @@
-"""Fill the Instacart cart from a grocery list. Never checks out.
+"""Fill Instacart carts from a grocery list. Never checks out.
+
+The best store gets everything it stocks. Items it lacks are looked for at
+the next-best shortlisted stores, up to MAX_STORES in total (each store is a
+separate cart with its own fee and minimum). Only items no store has fall
+back to substitutes.
 
 LLM calls (batched for free-tier quotas): 1 to shortlist stores, 1 to judge
 which shortlisted store really stocks the hard-to-find items, 1 to pick
-products for every item, and at most 1 more to pick substitutes. Everything
+products per store used, and at most 1 more to pick substitutes. Everything
 else (searching, pack counts, adding, verification) is deterministic.
 """
 
+from dataclasses import dataclass, field
 from typing import Protocol
 
 from pydantic import BaseModel, Field
@@ -23,7 +29,8 @@ from app.shopping.packs import packs_needed
 from app.shopping.session import Ask
 from app.shopping.verify import build_report
 
-MAX_SHORTLIST = 3
+MAX_SHORTLIST = 4
+MAX_STORES = 3          # most stores one list is split across; each has its own cart, fee and minimum
 MAX_PROBE_ITEMS = 4
 MAX_SUBSTITUTES_TRIED = 2
 
@@ -37,8 +44,23 @@ class Site(Protocol):
     delivery_zip: str | None
 
 
+@dataclass
+class Store:
+    slug: str
+    name: str
+    in_cart: set[str] = field(default_factory=set)   # products in a kept cart: reused, never re-picked
+
+
+@dataclass
+class Assignment:
+    store: Store
+    cand: Candidate
+    query: str
+    substituted_for: str | None = None
+
+
 class StoreShortlist(BaseModel):
-    stores: list[str] = Field(description="up to 3 store slugs, best first")
+    stores: list[str] = Field(description="up to 4 store slugs, best first")
     hard_items: list[str] = Field(description="up to 4 grocery item names least likely to be stocked everywhere")
     reason: str
 
@@ -82,8 +104,9 @@ def _render_candidates(rows: list[tuple[str, float, list[Candidate]]]) -> str:
     return "\n\n".join(blocks)
 
 
-async def choose_store(spec: MealSpec, grocery_list: GroceryList, site: Site, llm: StructuredLLM,
-                       emit: Emit, run_id: str | None) -> tuple[str, str]:
+async def choose_stores(spec: MealSpec, grocery_list: GroceryList, site: Site, llm: StructuredLLM,
+                        emit: Emit, run_id: str | None) -> list[Store]:
+    """Shortlisted stores, best first: by how many hard-to-find items they really stock."""
     stores = await site.list_stores()
     names = dict(stores)
     shortlist = await llm.structured(
@@ -110,15 +133,59 @@ async def choose_store(spec: MealSpec, grocery_list: GroceryList, site: Site, ll
     judged = await _pick(llm, rows, "probe", run_id)
     stocked = {slug: [item for k, (s, item) in keys.items() if s == slug and judged.get(k) is not None]
                for slug in slugs}
-
-    best, best_score = slugs[0], -1
-    for slug in slugs:  # LLM order breaks ties
+    for slug in slugs:
         found = stocked[slug]
         await emit(events.progress(run_id or "", "shop", f"{names[slug]} stocks {len(found)}/{len(hard)} "
                                                          f"hard-to-find items ({', '.join(found) or 'none'})"))
-        if len(found) > best_score:
-            best, best_score = slug, len(found)
-    return best, names[best]
+    ranked = sorted(slugs, key=lambda s: -len(stocked[s]))   # stable: the LLM's order breaks ties
+    return [Store(s, names[s]) for s in ranked]
+
+
+async def _open_store(store: Store, first: bool, *, site: Site, spec: MealSpec, ask: Ask, emit: Emit,
+                      rid: str, notes: list[str]) -> None:
+    """Look at a store's cart before using it, and ask before emptying it."""
+    existing = await site.cart_lines(store.slug)
+    if first and site.delivery_zip and site.delivery_zip != spec.zip_code:
+        warning = (f"Instacart is set to deliver to {site.delivery_zip}, not your ZIP {spec.zip_code}. Stores and "
+                   f"prices are for {site.delivery_zip}. To shop for {spec.zip_code}, change the delivery address "
+                   "in Instacart and run again.")
+        notes.append(warning)
+        await emit(events.progress(rid, "shop", warning))
+    if not existing:
+        return
+    answer = await ask("cart_clear_approval",
+                       f"Your {store.name} cart already has {len(existing)} item(s): "
+                       f"{', '.join(e.name for e in existing[:5])}. Clear it first? (clear/keep)", None)
+    if answer.strip().lower().startswith("clear"):
+        await site.clear_cart(store.slug)
+        await emit(events.progress(rid, "shop", f"Cleared the existing {store.name} cart"))
+    else:
+        store.in_cart = {e.name for e in existing}
+        notes.append(f"Kept {len(existing)} item(s) already in your {store.name} cart")
+
+
+async def _match_at(store: Store, items: list[GroceryItem], *, site: Site, llm: StructuredLLM,
+                    run_id: str | None) -> tuple[dict[str, Assignment], list[GroceryItem]]:
+    """Search one store for these items; one LLM call picks for all of them.
+
+    A product already in a kept cart is reused for its item, so a re-run never adds a
+    second, different product.
+    """
+    found = [(item, await site.search(store.slug, search_query(item.name), item.name)) for item in items]
+    reused = {i.name: next(c.index for c in cands if c.name in store.in_cart)
+              for i, cands in found if any(c.name in store.in_cart for c in cands)}
+    asked = await _pick(llm, [(i.name, i.total_grams, c) for i, c in found if c and i.name not in reused],
+                        "pick", run_id)
+    picks = asked | reused  # what's already in the cart wins, even if the LLM answered for it
+    got: dict[str, Assignment] = {}
+    missing: list[GroceryItem] = []
+    for item, cands in found:
+        idx = picks.get(item.name)
+        if idx is not None and 0 <= idx < len(cands) and cands[idx].in_stock:
+            got[item.name] = Assignment(store, cands[idx], search_query(item.name))
+        else:
+            missing.append(item)
+    return got, missing
 
 
 async def _substitution_ok(spec: MealSpec, plan: MealPlan, original: str, substitute: str,
@@ -143,100 +210,89 @@ async def fill_cart(spec: MealSpec, plan: MealPlan, grocery_list: GroceryList, *
                     run_id: str | None = None) -> tuple[CartReport, bool]:
     """Returns the verified report and whether every item is covered (cart_ready)."""
     rid = run_id or ""
-    store, store_name = await choose_store(spec, grocery_list, site, llm, emit, run_id)
-    await emit(events.progress(rid, "shop", f"Shopping at {store_name}"))
     notes: list[str] = []
+    ranked = await choose_stores(spec, grocery_list, site, llm, emit, run_id)
 
-    existing = await site.cart_lines(store)
-    if site.delivery_zip and site.delivery_zip != spec.zip_code:
-        warning = (f"Instacart is set to deliver to {site.delivery_zip}, not your ZIP {spec.zip_code}. Stores and "
-                   f"prices are for {site.delivery_zip}. To shop for {spec.zip_code}, change the delivery address "
-                   "in Instacart and run again.")
-        notes.append(warning)
-        await emit(events.progress(rid, "shop", warning))
-    cleared = False
-    if existing:
-        answer = await ask("cart_clear_approval",
-                           f"Your {store_name} cart already has {len(existing)} item(s): "
-                           f"{', '.join(e.name for e in existing[:5])}. Clear it first? (clear/keep)", None)
-        if answer.strip().lower().startswith("clear"):
-            await site.clear_cart(store)
-            cleared = True
-            await emit(events.progress(rid, "shop", "Cleared the existing cart"))
+    # 1. The best store first; whatever it lacks goes to the next store, up to MAX_STORES.
+    assigned: dict[str, Assignment] = {}
+    opened: list[Store] = []
+    remaining = list(grocery_list.items)
+    for n, store in enumerate(ranked):
+        if not remaining or len({a.store.slug for a in assigned.values()}) >= MAX_STORES:
+            break
+        if n == 0:
+            await emit(events.progress(rid, "shop", f"Shopping at {store.name}"))
         else:
-            notes.append(f"Kept {len(existing)} item(s) already in the cart")
+            await emit(events.progress(rid, "shop", f"Not found yet: {', '.join(i.name for i in remaining)}. "
+                                                    f"Looking at {store.name}"))
+        await _open_store(store, n == 0, site=site, spec=spec, ask=ask, emit=emit, rid=rid, notes=notes)
+        opened.append(store)
+        got, remaining = await _match_at(store, remaining, site=site, llm=llm, run_id=run_id)
+        assigned |= got
+        if n > 0 and got:
+            await emit(events.progress(rid, "shop", f"{store.name} has {', '.join(got)}"))
 
-    # 1. Search every item, then one LLM call picks for all of them. A product already in a
-    #    kept cart is reused for its item, so a re-run never adds a second, different product.
-    in_cart = {e.name for e in existing} if existing and not cleared else set()
-    found = [(item, await site.search(store, search_query(item.name), item.name))
-             for item in grocery_list.items]
-    reused = {i.name: next(c.index for c in cands if c.name in in_cart)
-              for i, cands in found if any(c.name in in_cart for c in cands)}
-    asked = await _pick(llm, [(i.name, i.total_grams, c) for i, c in found if c and i.name not in reused],
-                        "pick", run_id)
-    picks = asked | reused  # what's already in the cart wins, even if the LLM answered for it
-
-    chosen: dict[str, tuple[Candidate, str, str | None]] = {}  # item → (candidate, query, substituted_for)
-    missing: list[GroceryItem] = []
-    for item, cands in found:
-        idx = picks.get(item.name)
-        if idx is not None and 0 <= idx < len(cands) and cands[idx].in_stock:
-            chosen[item.name] = (cands[idx], search_query(item.name), None)
-        else:
-            missing.append(item)
-
-    # 2. Substitutes for what's missing: search, one LLM call, then re-validate macros.
+    # 2. Substitutes only for what no store had: search, one LLM call, then re-validate macros.
     sub_rows = []
-    for item in missing:
+    for item in remaining:
         for sub in item.substitutes[:MAX_SUBSTITUTES_TRIED]:
-            cands = await site.search(store, search_query(sub), sub)
-            if cands:
-                sub_rows.append((item, sub, cands))
+            for store in opened:
+                cands = await site.search(store.slug, search_query(sub), sub)
+                if cands:
+                    sub_rows.append((item, sub, store, cands))
     if sub_rows:
         # The LLM judges each candidate against the substitute food, e.g. "masoor_dal".
-        sub_picks = await _pick(llm, [(f"{i.name} -> {s}", i.total_grams, c) for i, s, c in sub_rows],
-                                "substitute", run_id)
-        for item, sub, cands in sub_rows:
-            idx = sub_picks.get(f"{item.name} -> {sub}")
-            if item.name in chosen or idx is None or not (0 <= idx < len(cands)) or not cands[idx].in_stock:
+        sub_picks = await _pick(llm, [(f"{i.name} -> {s} @ {st.slug}", i.total_grams, c)
+                                      for i, s, st, c in sub_rows], "substitute", run_id)
+        for item, sub, store, cands in sub_rows:
+            idx = sub_picks.get(f"{item.name} -> {sub} @ {store.slug}")
+            if item.name in assigned or idx is None or not (0 <= idx < len(cands)) or not cands[idx].in_stock:
                 continue
             ok, why = await _substitution_ok(spec, plan, item.name, sub, lookup)
             if not ok:
                 answer = await ask("substitution_approval",
-                                   f"{store_name} has no {item.name}. Use {cands[idx].name} ({sub}) instead? "
-                                   f"It breaks the plan's checks: {why}. (yes/no)", None)
+                                   f"No store has {item.name}. Use {cands[idx].name} ({sub}) from {store.name} "
+                                   f"instead? It breaks the plan's checks: {why}. (yes/no)", None)
                 if not answer.strip().lower().startswith("y"):
                     continue
-            chosen[item.name] = (cands[idx], search_query(sub), item.name)
-            notes.append(f"Substituted {sub} for {item.name}: {cands[idx].name}")
+            assigned[item.name] = Assignment(store, cands[idx], search_query(sub), item.name)
+            notes.append(f"Substituted {sub} for {item.name}: {cands[idx].name} ({store.name})")
+    searched = ", ".join(s.name for s in opened)
     for item in grocery_list.items:
-        if item.name not in chosen:
-            notes.append(f"Unavailable at {store_name}: {item.name}")
+        if item.name not in assigned:
+            notes.append(f"Not found at {searched}: {item.name}")
+
+    used = [s for s in opened if any(a.store is s for a in assigned.values())]
+    if len(used) > 1:
+        notes.insert(0, f"Your list is split across {len(used)} stores ({', '.join(s.name for s in used)}). "
+                        "Each is a separate Instacart cart with its own delivery fee and minimum order.")
 
     # 3. Add to cart; pack counts are Python arithmetic.
     for item in grocery_list.items:
-        if item.name not in chosen:
+        a = assigned.get(item.name)
+        if a is None:
             continue
-        cand, query, _ = chosen[item.name]
+        cand = a.cand
         packs = packs_needed(item.total_grams, cand.pack_grams) if cand.pack_grams else 1
         if not cand.pack_grams:
             notes.append(f"Could not read the size of {cand.name}; added 1, check the amount")
         try:
-            qty = await site.add(store, query, cand.name, packs)
+            qty = await site.add(a.store.slug, a.query, cand.name, packs)
         except LookupError as e:
             notes.append(str(e))
             continue
         price = f" — ${cand.price * qty:.2f}" if cand.price else ""
-        verb = "Already in cart" if cand.name in in_cart else "Added"
-        await emit(events.progress(rid, "shop", f"{verb}: {cand.name} ({cand.size}) × {qty:g}{price}"))
+        verb = "Already in cart" if cand.name in a.store.in_cart else "Added"
+        where = f" at {a.store.name}" if len(used) > 1 else ""
+        await emit(events.progress(rid, "shop", f"{verb}{where}: {cand.name} ({cand.size}) × {qty:g}{price}"))
         if cand.price and cand.pack_grams:
             await db.record_price(spec.user_id, canonical_key(item.name), cand.name, cand.pack_grams, cand.price)
 
-    # 4. Verify against the grocery list, from the cart as Instacart shows it.
-    cart = await site.cart_lines(store)
-    picked = {name: (c.name, c.pack_grams or 0.0, sub) for name, (c, _, sub) in chosen.items()}
-    return build_report(store_name, grocery_list, cart, picked, spec.budget_weekly_usd, notes)
+    # 4. Verify against the grocery list, from each cart as Instacart shows it.
+    carts = {s.name: await site.cart_lines(s.slug) for s in (used or opened[:1])}
+    picked = {name: (a.store.name, a.cand.name, a.cand.pack_grams or 0.0, a.substituted_for)
+              for name, a in assigned.items()}
+    return build_report(grocery_list, carts, picked, spec.budget_weekly_usd, notes)
 
 
 async def _pick(llm: StructuredLLM, rows, purpose: str, run_id: str | None) -> dict[str, int | None]:

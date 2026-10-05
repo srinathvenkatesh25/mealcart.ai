@@ -130,7 +130,8 @@ export default function Home() {
               )}
 
               {state.plan && (
-                <PlanView plan={state.plan} perDay={state.perDay} spec={state.spec} canSwap={approving} onSwap={swap} />
+                <PlanView plan={state.plan} perDay={state.perDay} perMeal={state.perMeal} spec={state.spec}
+                  canSwap={approving} onSwap={swap} />
               )}
 
               {state.groceryList && !state.report && (

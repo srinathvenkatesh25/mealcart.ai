@@ -71,7 +71,8 @@ Open http://localhost:3000. **After changing any backend code, restart terminal 
 2. **Watch the activity feed.** It shows the AI planning, software sizing every portion, and the
    checks. Lines labelled "AI model" appear only if a model's free quota runs out and it switches.
 3. **Read the week.** Each day is a nutrition label: calories and protein against your targets.
-   Click a meal for its ingredients (in grams) and steps.
+   Every meal shows its own calories and protein, adding up to the day. Click a meal for its
+   carbs and fat, each ingredient's grams, calories and protein, and the steps.
 4. **Swap a meal you don't like.** Hover a meal, click **Swap**, say why, tick ingredients to avoid.
    One AI call replaces just that meal, the day is re-balanced, and the list is rebuilt.
 5. **Check the grocery list.** Untick anything you already have. The card shows the estimated cost
@@ -80,7 +81,8 @@ Open http://localhost:3000. **After changing any backend code, restart terminal 
    as it's added. A window appears only if you need to sign in. If your cart already has items it
    asks whether to empty it. To watch the browser instead, set `BROWSER_MODE=visible` in `.env`.
 7. **Review the cart.** Every item is checked against the list (needed vs in cart, price, substitutes).
-   Open Instacart and check out yourself.
+   Items the best store doesn't stock are bought at the next-best store (up to 3 stores), so the
+   review groups items by store with each store's subtotal. Check out each store's cart yourself.
 
 To drive the same flow without the page: `python scripts/run_cli.py`.
 

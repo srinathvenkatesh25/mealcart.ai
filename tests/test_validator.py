@@ -127,3 +127,18 @@ async def test_same_meal_at_most_twice_a_week():
         "Wednesday lunch: 'lunch meal' already appears on Monday, Tuesday — choose a different meal",
         "Wednesday dinner: 'dinner meal' already appears on Monday, Tuesday — choose a different meal",
     ]
+
+
+async def test_per_meal_numbers_add_up_to_the_day_and_match_hand_arithmetic():
+    result = await validator.check(MealPlan(days=[day()]), spec(), fake_lookup)
+    lunch, dinner = result.per_meal["Monday"]
+    # lunch: chicken 500 g (120 kcal, 22.5 g protein per 100 g) + rice 250 g (365, 7.1) + oil 15 g (884, 0)
+    assert (lunch["slot"], lunch["calories"], lunch["protein_g"]) == ("lunch", 1645.1, 130.2)
+    assert (dinner["calories"], dinner["protein_g"]) == (352.0, 24.6)       # dal 100 g
+    assert [i["name"] for i in lunch["ingredients"]] == ["chicken_breast", "basmati_rice", "vegetable_oil"]
+    assert lunch["ingredients"][0] == {"name": "chicken_breast", "grams": 500, "calories": 600.0,
+                                       "protein_g": 112.5, "carbs_g": 0.0, "fat_g": 13.0}
+    for key in ("calories", "protein_g", "carbs_g", "fat_g"):
+        assert sum(m[key] for m in result.per_meal["Monday"]) == pytest.approx(result.per_day["Monday"][key], abs=0.2)
+        for m in result.per_meal["Monday"]:   # a meal is the sum of its ingredients
+            assert sum(i[key] for i in m["ingredients"]) == pytest.approx(m[key], abs=0.2)

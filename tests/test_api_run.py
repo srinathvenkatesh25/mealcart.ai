@@ -89,6 +89,9 @@ def test_full_run_with_approval_and_login_pause():
         with client.websocket_connect(f"/api/runs/{run_id}/events") as ws:
             plan, seen = receive_until(ws, "plan.ready")
             assert plan["per_day"]["Monday"]["calories"] > 0 and len(plan["grocery_list"]["items"]) == 7
+            monday = plan["per_meal"]["Monday"]            # one entry per meal, with its ingredients
+            assert [m["slot"] for m in monday] == ["breakfast", "lunch", "dinner"]
+            assert sum(m["calories"] for m in monday) == pytest.approx(plan["per_day"]["Monday"]["calories"], abs=0.5)
 
             approval, _ = receive_until(ws, "hitl.required")
             assert approval["kind"] == "plan_approval" and "7 items" in approval["prompt"]
@@ -113,6 +116,9 @@ def test_full_run_with_approval_and_login_pause():
         assert world.codes_received == [SECRET_CODE]
         run = client.get(f"/api/runs/{run_id}").json()
         assert run["status"] == "cart_ready" and run["open_hitl_event"] is None
+        # a reloaded page gets the same numbers back from the saved run
+        assert run["nutrition_json"]["per_meal"]["Monday"][1]["ingredients"][0]["name"] == "chicken_breast"
+        assert run["nutrition_json"]["per_day"]["Monday"]["protein_g"] > 0
         assert len(run["cart_report_json"]["lines"]) == 7
         assert run["llm_usage"] == {"calls": 0, "input_tokens": 0, "output_tokens": 0, "cost_usd": 0.0,
                                     "models": []}  # the fake LLM here makes no logged calls
