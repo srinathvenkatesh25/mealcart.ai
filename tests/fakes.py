@@ -2,6 +2,7 @@
 
 from app.models import DayPlan, Ingredient, Meal, MealPlan
 from app.nutrition.usda import FoodMacros, UnknownIngredientError
+from app.shopping.instacart import Candidate, CartEntry
 
 PER_100G = {
     "chicken_breast": (120, 22.5, 0.0, 2.6),
@@ -54,3 +55,37 @@ class ScriptedLLM:
         if isinstance(reply, Exception):
             raise reply
         return reply
+
+
+def cand(i, name, size, price, grams, in_stock=True):
+    return Candidate(index=i, name=name, size=size, price=price, pack_grams=grams, unit="ct", in_stock=in_stock)
+
+
+class FakeSite:
+    """A store whose search results and cart live in memory."""
+
+    def __init__(self, catalog: dict[tuple[str, str], list[Candidate]], cart: list[CartEntry] | None = None):
+        self.catalog = catalog
+        self.cart: dict[str, CartEntry] = {e.name: e for e in (cart or [])}
+        self.prices = {c.name: c for cs in catalog.values() for c in cs}
+        self.adds: list[tuple[str, int]] = []
+
+    async def list_stores(self):
+        return [("meijer", "Meijer"), ("quicklly-grocery", "Quicklly Indian Grocery"), ("cvs", "CVS")]
+
+    async def search(self, store, query, item, limit=8):
+        return self.catalog.get((store, query), [])
+
+    async def add(self, store, query, product_name, packs):
+        self.adds.append((product_name, packs))
+        c = self.prices[product_name]
+        e = self.cart.get(product_name)
+        qty = max(packs, e.quantity if e else 0)
+        self.cart[product_name] = CartEntry(product_name, c.size, round(c.price * qty, 2), qty, "ct")
+        return qty
+
+    async def cart_lines(self, store):
+        return list(self.cart.values())
+
+    async def clear_cart(self, store):
+        self.cart.clear()

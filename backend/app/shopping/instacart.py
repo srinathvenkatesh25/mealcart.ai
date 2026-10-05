@@ -15,6 +15,8 @@ Ads ("Sponsored") appear inside results and are skipped.
 """
 
 import re
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from urllib.parse import quote_plus
 
@@ -22,7 +24,7 @@ from playwright.async_api import Page
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
 from app.shopping.packs import G_PER, parse_size
-from app.shopping.session import human_pause
+from app.shopping.session import Ask, BrowserSession, ensure_logged_in, human_pause, login
 
 BASE = "https://www.instacart.com"
 RESULTS_TIMEOUT_MS = 15000
@@ -246,3 +248,15 @@ class InstacartSite:
             await shrink.first.click()
             await self.page.wait_for_timeout(1200)
         await self.page.keyboard.press("Escape")
+
+
+@asynccontextmanager
+async def open_instacart(user_id: str, ask: Ask) -> AsyncIterator[InstacartSite]:
+    """Open the user's Chrome profile, sign in through `ask` if needed, and yield the site.
+
+    The browser stays open for the whole shop step, including any pauses.
+    """
+    async with BrowserSession(user_id) as session:
+        if not await ensure_logged_in(session.page):
+            await login(session.page, ask)
+        yield InstacartSite(session.page)

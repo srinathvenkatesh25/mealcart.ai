@@ -1,6 +1,6 @@
 from typing import TypedDict
 
-from app.models import GroceryList, MealPlan, MealSpec, ValidationResult
+from app.models import CartReport, GroceryList, MealPlan, MealSpec, ValidationResult
 
 
 class RunState(TypedDict, total=False):
@@ -11,4 +11,5 @@ class RunState(TypedDict, total=False):
     validation: ValidationResult | None
     repair_attempts: int
     grocery_list: GroceryList | None
+    cart_report: CartReport | None
     error: str | None

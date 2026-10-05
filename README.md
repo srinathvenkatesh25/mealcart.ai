@@ -31,8 +31,21 @@ The app's Chrome blocks checkout and payment pages. Check out in your normal bro
 
 ```bash
 uvicorn app.main:app --app-dir backend     # no --reload: it would kill a run mid-shop
-curl localhost:8000/health
 ```
+
+Until the web page exists (Phase 7), drive a full run from a second terminal:
+
+```bash
+python scripts/run_cli.py                  # default preferences inside the script
+python scripts/run_cli.py my_spec.json     # or your own MealSpec JSON
+```
+
+It shows the week's plan and grocery list, asks you to approve, opens Chrome and fills
+your Instacart cart, then prints the verified cart. Questions (approval, login code,
+substitutions, clearing the cart) are asked in the terminal. It never checks out.
+
+API: `POST /api/runs` (MealSpec JSON, or `{"text": "..."}`), `GET /api/runs/{id}`,
+`WS /api/runs/{id}/events?since=<seq>`.
 
 ## Test
 
@@ -50,4 +63,5 @@ pytest
 | 3 Grocery list | done |
 | 4 Browser session + checkout guard | built; needs your one-time login: `python scripts/login.py` |
 | 5 Shopper | done: live 5-item cart filled, re-runs add nothing, verified CART READY. Try: `python scripts/shop_demo.py` |
-| 6 to 8 | see docs/build-plan.md §16 |
+| 6 Server, websocket, approval and pauses | done; end-to-end: `python scripts/run_cli.py` |
+| 7 to 8 | see docs/build-plan.md §16 |

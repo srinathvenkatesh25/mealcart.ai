@@ -317,7 +317,7 @@ Pauses trigger a browser `Notification` and a sound, behind a `notify()` interfa
 | 3 | Consolidator + packs + pantry + substitutions | a 7-day plan → a deduplicated list with no pantry items; size parsing tests pass. **Done:** the live 7-day plan (103 ingredient lines) → 25 items |
 | 4 | Session + guard + chat login | second launch needs no login; guard test blocks a checkout URL |
 | 5 | Shopper + verify | a 5-item list run 3 times gives an identical cart; coverage is all green |
-| 6 | Graph + API + websocket + registry + checkpointer | a full run via the API with a fake `email_code` pause; launch count == 1 |
+| 6 | Graph + API + websocket + registry + checkpointer | a full run via the API with a fake `email_code` pause; launch count == 1. **Done** (tests/test_api_run.py), plus approval survives a server restart |
 | 7 | Frontend | drive a whole run from the browser, including LiveView and approval |
 | 8 | Hardening + fallbacks | retries, cost caps, README demo script, Developer Platform link, computer-use fallback |
 

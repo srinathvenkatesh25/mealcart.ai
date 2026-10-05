@@ -1,3 +1,5 @@
+from langgraph.checkpoint.memory import InMemorySaver
+
 from app import db
 from app.graph.graph import build_graph
 from app.models import MealSpec
@@ -21,9 +23,9 @@ async def run(spec, llm):
     async def emit(e):
         events.append(e)
 
-    state = await build_graph().ainvoke(
+    state = await build_graph(InMemorySaver()).ainvoke(
         {"run_id": run_id, "spec": spec},
-        config={"configurable": {"llm": llm, "lookup": fake_lookup, "emit": emit}},
+        config={"configurable": {"thread_id": run_id, "llm": llm, "lookup": fake_lookup, "emit": emit}},
     )
     return run_id, state, events
 
@@ -49,6 +51,8 @@ async def test_bad_plan_repaired_within_three_rounds():
     messages = [e["message"] for e in events if e["type"] == "run.progress"]
     assert "Repair round 2/3" in messages and "Plan passed every check" in messages
     assert messages[-1].startswith("Grocery list ready:")
+    assert state["__interrupt__"][0].value["kind"] == "plan_approval"  # paused before any shopping
+    assert any(e["type"] == "plan.ready" for e in events)
     assert {i["name"] for i in saved["grocery_list_json"]["items"]} >= {"chicken_breast", "basmati_rice"}
 
 

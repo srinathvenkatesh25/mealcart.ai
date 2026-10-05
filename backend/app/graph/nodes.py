@@ -1,10 +1,12 @@
 """One async function per graph node.
 
-Dependencies (llm, macro lookup, emit) come from config["configurable"] so
-tests can swap in fakes without touching the graph.
+Dependencies (llm, macro lookup, emit, ask, open_site) come from
+config["configurable"] so tests can swap in fakes without touching the graph.
 """
 
 from langchain_core.runnables import RunnableConfig
+from langgraph.types import interrupt
+from pydantic import ValidationError
 
 from app import db
 from app.graph.state import RunState
@@ -12,8 +14,9 @@ from app.hitl import events
 from app.intake.intake import feasibility_warnings
 from app.nutrition import solver, validator
 from app.planner import planner
+from app.models import GroceryList
 from app.planner.llm import LLMOutputError, LLMQuotaError
-from app.shopping import consolidator
+from app.shopping import consolidator, shopper
 
 MAX_REPAIR_ATTEMPTS = 3
 
@@ -87,7 +90,49 @@ async def consolidate(state: RunState, config: RunnableConfig) -> RunState:
     await db.update_run(run_id, grocery_list_json=grocery_list.model_dump())
     est = f", est. ${grocery_list.est_total_usd:.2f}" if grocery_list.est_total_usd is not None else ""
     await emit(events.progress(run_id, "consolidate", f"Grocery list ready: {len(grocery_list.items)} items{est}"))
+    await emit(events.plan_ready(run_id, state["meal_plan"].model_dump(), state["validation"].per_day,
+                                 grocery_list.model_dump()))
     return {"grocery_list": grocery_list}
+
+
+async def approve(state: RunState, config: RunnableConfig) -> RunState:
+    """Pause until you approve (or edit) the grocery list. Nothing touches Instacart before this.
+
+    A LangGraph interrupt: the run is checkpointed, so an approval still works
+    after a server restart. This node re-runs from the top on resume, so it has
+    no side effects before interrupt().
+    """
+    gl = state["grocery_list"]
+    est = f" (est. ${gl.est_total_usd:.2f})" if gl.est_total_usd is not None else ""
+    answer = interrupt({
+        "kind": "plan_approval",
+        "prompt": f"Grocery list ready: {len(gl.items)} items{est}. Approve to start filling your Instacart cart?",
+    })
+    if answer == "approved":
+        return {}
+    if isinstance(answer, dict) and "edit" in answer:
+        try:
+            return {"grocery_list": GroceryList.model_validate(answer["edit"])}
+        except ValidationError as e:
+            await db.update_run(state["run_id"], status="failed", error=f"invalid edited list: {e}")
+            return {"error": "invalid_edit"}
+    await db.update_run(state["run_id"], status="failed", error="cancelled_by_user")
+    return {"error": "cancelled_by_user"}
+
+
+async def shop(state: RunState, config: RunnableConfig) -> RunState:
+    llm, lookup, emit = _deps(config)
+    c = config["configurable"]
+    spec, run_id, gl = state["spec"], state["run_id"], state["grocery_list"]
+    await db.update_run(run_id, grocery_list_json=gl.model_dump())  # in case it was edited
+    await emit(events.progress(run_id, "shop", "Opening Instacart…"))
+    async with c["open_site"](spec.user_id, c["ask"]) as site:
+        report, complete = await shopper.fill_cart(spec, state["meal_plan"], gl, site=site, llm=llm,
+                                                   lookup=lookup, ask=c["ask"], emit=emit, run_id=run_id)
+    await db.update_run(run_id, cart_report_json=report.model_dump(),
+                        status="cart_ready" if complete else "needs_attention")
+    await emit(events.cart_result(run_id, complete, report.model_dump()))
+    return {"cart_report": report}
 
 
 async def fail(state: RunState, config: RunnableConfig) -> RunState:

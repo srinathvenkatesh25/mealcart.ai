@@ -177,6 +177,31 @@ async def get_open_hitl_event(run_id: str) -> dict[str, Any] | None:
     return event
 
 
+async def recover_runs_after_restart() -> list[str]:
+    """Runs whose task died with the old server process.
+
+    A run paused at plan_approval is checkpointed and can resume, so it stays
+    awaiting_hitl. Any other unfinished run had live state (often an open
+    browser) and is marked failed. Returns the ids of resumable runs.
+    """
+    async with aiosqlite.connect(_db_path()) as db:
+        async with db.execute(
+            "SELECT r.id, (SELECT kind FROM hitl_events h WHERE h.run_id = r.id AND h.status = 'open' "
+            " ORDER BY seq DESC LIMIT 1) FROM runs r WHERE r.status IN ('running', 'awaiting_hitl')"
+        ) as cur:
+            rows = await cur.fetchall()
+        resumable = [run_id for run_id, kind in rows if kind == "plan_approval"]
+        for run_id, kind in rows:
+            if kind != "plan_approval":
+                await db.execute(
+                    "UPDATE runs SET status = 'failed', error = 'interrupted by server restart', updated_at = ? "
+                    "WHERE id = ?", (_now(), run_id))
+                await db.execute("UPDATE hitl_events SET status = 'resolved', resolved_at = ? "
+                                 "WHERE run_id = ? AND status = 'open'", (_now(), run_id))
+        await db.commit()
+    return resumable
+
+
 async def get_usda_cache(query: str) -> dict[str, Any] | None:
     async with aiosqlite.connect(_db_path()) as db:
         async with db.execute("SELECT payload_json FROM usda_cache WHERE query = ?", (query,)) as cur:
