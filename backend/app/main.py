@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 
 import aiosqlite
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
 from app.api import runs, ws
@@ -35,6 +36,9 @@ def create_app(deps: Deps | None = None) -> FastAPI:
             await conn.close()
 
     app = FastAPI(title="MealCart Agent", lifespan=lifespan)
+    # The web page (Next.js dev server) runs on its own port on this machine.
+    app.add_middleware(CORSMiddleware, allow_origins=get_settings().web_origins.split(","),
+                       allow_methods=["GET", "POST"], allow_headers=["content-type"])
     app.include_router(runs.router)
     app.include_router(ws.router)
 

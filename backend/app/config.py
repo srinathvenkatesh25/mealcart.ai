@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     database_path: str = "./mealcart.db"
     checkpoint_path: str = "./checkpoints.db"
     single_user_id: str = "user_default"
+    web_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
 
 
 @lru_cache

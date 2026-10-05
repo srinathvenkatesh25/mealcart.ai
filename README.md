@@ -33,7 +33,17 @@ The app's Chrome blocks checkout and payment pages. Check out in your normal bro
 uvicorn app.main:app --app-dir backend     # no --reload: it would kill a run mid-shop
 ```
 
-Until the web page exists (Phase 7), drive a full run from a second terminal:
+Then the web page, in a second terminal (first time: `cd frontend && npm install`):
+
+```bash
+cd frontend && npm run dev                 # open http://localhost:3000
+```
+
+Set your targets, watch the week get planned, swap meals you don't like, untick groceries you
+already have, approve, and watch the cart fill. Answer login codes and CAPTCHAs on the page
+(CAPTCHAs are solved in the Chrome window MealCart opens).
+
+Or drive a full run from the terminal instead:
 
 ```bash
 python scripts/run_cli.py                  # default preferences inside the script
@@ -66,4 +76,5 @@ pytest
 | 4 Browser session + checkout guard | built; needs your one-time login: `python scripts/login.py` |
 | 5 Shopper | done: live 5-item cart filled, re-runs add nothing, verified CART READY. Try: `python scripts/shop_demo.py` |
 | 6 Server, websocket, approval and pauses | done; end-to-end: `python scripts/run_cli.py` |
-| 7 to 8 | see docs/build-plan.md §16 |
+| 7 Web page | done: `cd frontend && npm run dev` |
+| 8 | see docs/build-plan.md §16 |
