@@ -103,10 +103,14 @@ async def solve_day(day: DayPlan, spec: MealSpec, lookup: MacroLookup) -> tuple[
     return new_day, within_targets(kcal, prot, spec)
 
 
-async def solve_plan(plan: MealPlan, spec: MealSpec, lookup: MacroLookup) -> tuple[MealPlan, list[str]]:
-    """Re-portion every day; returns the plan and the days that still miss targets."""
+async def solve_plan(plan: MealPlan, spec: MealSpec, lookup: MacroLookup,
+                     only: list[str] | None = None) -> tuple[MealPlan, list[str]]:
+    """Re-portion every day (or only the named days); returns the plan and the days that miss targets."""
     days, missed = [], []
     for day in plan.days:
+        if only is not None and day.day not in only:
+            days.append(day)
+            continue
         solved, hit = await solve_day(day, spec, lookup)
         days.append(solved)
         if not hit:

@@ -9,7 +9,7 @@ from typing import Protocol, TypeVar
 from pydantic import BaseModel
 
 from app.config import get_settings
-from app.models import DayPlan, MealPlan, MealSpec
+from app.models import DayPlan, Meal, MealPlan, MealSpec
 from app.planner import prompts
 
 WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
@@ -70,3 +70,28 @@ async def repair(spec: MealSpec, plan: MealPlan, deltas: list[str], llm: Structu
                                  purpose="repair", run_id=run_id, temperature=0.2)
     fixed = {d.day: d for d in _align(reply, [d.day for d in failing])}
     return MealPlan(days=[fixed.get(d.day, d) for d in plan.days])
+
+
+def find_meal(plan: MealPlan, day: str, slot: str) -> tuple[int, int] | None:
+    for di, d in enumerate(plan.days):
+        if d.day.lower() == day.strip().lower():
+            for mi, m in enumerate(d.meals):
+                if m.slot == slot.strip().lower():
+                    return di, mi
+    return None
+
+
+async def swap_meal(spec: MealSpec, plan: MealPlan, day: str, slot: str, reason: str, kcal: float,
+                    protein: float, llm: StructuredLLM, run_id: str | None = None) -> MealPlan:
+    """One LLM call replaces one meal; the rest of the week is untouched."""
+    where = find_meal(plan, day, slot)
+    if where is None:
+        raise LookupError(f"no {slot} on {day}")
+    di, mi = where
+    old = plan.days[di].meals[mi]
+    new = await llm.structured(Meal, prompts.planner_system(spec),
+                               prompts.swap_user(plan, plan.days[di].day, old, reason, kcal, protein),
+                               purpose="swap", run_id=run_id, temperature=0.5)
+    updated = plan.model_copy(deep=True)
+    updated.days[di].meals[mi] = new.model_copy(update={"slot": old.slot})
+    return updated

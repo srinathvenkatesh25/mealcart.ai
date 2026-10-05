@@ -1,5 +1,6 @@
 """intake → plan → solve → validate ⇄ repair (≤3) → consolidate → approve → shop
-                                              └─ fail (after 3 repairs)
+                 ▲                            └─ fail (after 3 repairs)      │
+                 └──────────────── swap (replace one meal) ◄─────────────────┘
 
 `approve` pauses with a LangGraph interrupt, so the graph needs a checkpointer.
 """
@@ -30,6 +31,7 @@ def build_graph(checkpointer=None):
     g.add_node("repair", nodes.repair)
     g.add_node("consolidate", nodes.consolidate)
     g.add_node("approve", nodes.approve)
+    g.add_node("swap", nodes.swap)
     g.add_node("shop", nodes.shop)
     g.add_node("fail", nodes.fail)
 
@@ -40,7 +42,8 @@ def build_graph(checkpointer=None):
     g.add_conditional_edges("validate", nodes.after_validate, {"done": "consolidate", "repair": "repair", "fail": "fail"})
     g.add_conditional_edges("repair", nodes.stop_on_error, {"continue": "solve", "stop": END})
     g.add_edge("consolidate", "approve")
-    g.add_conditional_edges("approve", nodes.stop_on_error, {"continue": "shop", "stop": END})
+    g.add_conditional_edges("approve", nodes.after_approve, {"shop": "shop", "swap": "swap", "stop": END})
+    g.add_conditional_edges("swap", nodes.after_swap, {"solve": "solve", "approve": "approve", "stop": END})
     g.add_edge("shop", END)
     g.add_edge("fail", END)
     return g.compile(checkpointer=checkpointer)

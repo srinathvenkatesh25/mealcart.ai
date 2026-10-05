@@ -56,3 +56,10 @@ async def test_solve_plan_lists_missed_days():
     plan = MealPlan(days=[rough_day("Monday"), rough_day("Tuesday", extra=[("dragon_fruit_paste", 50)])])
     _, missed = await solve_plan(plan, spec(), fake_lookup)
     assert missed == ["Tuesday"]
+
+
+async def test_solve_only_named_days():
+    plan = MealPlan(days=[rough_day("Monday"), rough_day("Tuesday")])
+    solved, _ = await solve_plan(plan, spec(), fake_lookup, only=["Tuesday"])
+    assert solved.days[0] == plan.days[0]          # untouched
+    assert solved.days[1] != plan.days[1]          # re-portioned

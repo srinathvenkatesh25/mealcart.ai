@@ -13,6 +13,7 @@ from app.graph.state import RunState
 from app.hitl import events
 from app.intake.intake import feasibility_warnings
 from app.nutrition import solver, validator
+from app.nutrition.usda import UnknownIngredientError
 from app.planner import planner
 from app.models import GroceryList
 from app.planner.llm import LLMOutputError, LLMQuotaError
@@ -49,11 +50,12 @@ async def plan(state: RunState, config: RunnableConfig) -> RunState:
 async def solve(state: RunState, config: RunnableConfig) -> RunState:
     _, lookup, emit = _deps(config)
     run_id = state["run_id"]
-    meal_plan, missed = await solver.solve_plan(state["meal_plan"], state["spec"], lookup)
+    meal_plan, missed = await solver.solve_plan(state["meal_plan"], state["spec"], lookup,
+                                                only=state.get("solve_days"))
     await db.update_run(run_id, meal_plan_json=meal_plan.model_dump())
     msg = "Portions sized to hit calories and protein"
     await emit(events.progress(run_id, "solve", msg + (f" (still off: {', '.join(missed)})" if missed else "")))
-    return {"meal_plan": meal_plan}
+    return {"meal_plan": meal_plan, "solve_days": None}
 
 
 async def validate(state: RunState, config: RunnableConfig) -> RunState:
@@ -106,10 +108,13 @@ async def approve(state: RunState, config: RunnableConfig) -> RunState:
     est = f" (est. ${gl.est_total_usd:.2f})" if gl.est_total_usd is not None else ""
     answer = interrupt({
         "kind": "plan_approval",
-        "prompt": f"Grocery list ready: {len(gl.items)} items{est}. Approve to start filling your Instacart cart?",
+        "prompt": f"Grocery list ready: {len(gl.items)} items{est}. Approve to start filling your Instacart cart, "
+                  "or swap a meal you don't like?",
     })
     if answer == "approved":
-        return {}
+        return {"swap_request": None}
+    if isinstance(answer, dict) and isinstance(answer.get("swap"), dict):
+        return {"swap_request": answer["swap"]}
     if isinstance(answer, dict) and "edit" in answer:
         try:
             return {"grocery_list": GroceryList.model_validate(answer["edit"])}
@@ -118,6 +123,59 @@ async def approve(state: RunState, config: RunnableConfig) -> RunState:
             return {"error": "invalid_edit"}
     await db.update_run(state["run_id"], status="failed", error="cancelled_by_user")
     return {"error": "cancelled_by_user"}
+
+
+async def swap(state: RunState, config: RunnableConfig) -> RunState:
+    """Replace one meal (one LLM call), then re-size, re-check and rebuild the list.
+
+    Ingredients you name in `avoid` join the run's dislikes, so they are
+    excluded from the new meal and from any later repair or swap.
+    """
+    llm, lookup, emit = _deps(config)
+    req, run_id, plan = state["swap_request"], state["run_id"], state["meal_plan"]
+    day, slot = str(req.get("day", "")), str(req.get("slot", ""))
+    where = planner.find_meal(plan, day, slot)
+    if where is None:
+        await emit(events.progress(run_id, "swap", f"There's no {slot or '?'} on {day or '?'} to swap"))
+        return {"swap_request": None, "swap_failed": True}
+
+    spec = state["spec"]
+    avoid = [a.strip() for a in req.get("avoid", []) if isinstance(a, str) and a.strip()]
+    if avoid:
+        spec = spec.model_copy(update={"dislikes": spec.dislikes + [a for a in avoid if a not in spec.dislikes]})
+        await db.update_run(run_id, meal_spec_json=spec.model_dump())
+    old = plan.days[where[0]].meals[where[1]]
+    kcal = protein = 0.0
+    for ing in old.ingredients:
+        try:
+            m = await lookup(ing.name)
+        except UnknownIngredientError:
+            continue
+        kcal += ing.grams / 100 * m.calories
+        protein += ing.grams / 100 * m.protein_g
+
+    await emit(events.progress(run_id, "swap", f"Replacing {plan.days[where[0]].day} {old.slot}: {old.title}…"))
+    try:
+        new_plan = await planner.swap_meal(spec, plan, day, slot, str(req.get("reason", "")), kcal, protein,
+                                           llm, run_id)
+    except (LLMQuotaError, LLMOutputError) as e:
+        return await _llm_failed(state, emit, e)
+    new_meal = new_plan.days[where[0]].meals[where[1]]
+    await emit(events.progress(run_id, "swap", f"New {old.slot}: {new_meal.title}"))
+    return {"spec": spec, "meal_plan": new_plan, "swap_request": None, "swap_failed": False,
+            "repair_attempts": 0, "solve_days": [new_plan.days[where[0]].day]}
+
+
+def after_approve(state: RunState) -> str:
+    if state.get("error"):
+        return "stop"
+    return "swap" if state.get("swap_request") else "shop"
+
+
+def after_swap(state: RunState) -> str:
+    if state.get("error"):
+        return "stop"
+    return "approve" if state.get("swap_failed") else "solve"
 
 
 async def shop(state: RunState, config: RunnableConfig) -> RunState:

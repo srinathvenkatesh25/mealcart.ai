@@ -65,8 +65,15 @@ def show_cart(msg: dict) -> None:
 async def answer(msg: dict):
     kind, prompt = msg["kind"], msg["prompt"]
     if kind == "plan_approval":
-        reply = await asyncio.to_thread(input, f"\n{prompt} (yes/no) > ")
-        return "approved" if reply.strip().lower().startswith("y") else "rejected"
+        reply = (await asyncio.to_thread(
+            input, f"\n{prompt}\n  yes | no | swap <day> <slot>   (e.g. swap tuesday dinner) > ")).strip()
+        words = reply.lower().split()
+        if words[:1] == ["swap"] and len(words) >= 3:
+            reason = await asyncio.to_thread(input, "  Why? (optional) > ")
+            avoid = await asyncio.to_thread(input, "  Ingredients to avoid from now on, comma-separated (optional) > ")
+            return {"swap": {"day": words[1].capitalize(), "slot": words[2], "reason": reason.strip(),
+                             "avoid": [a.strip() for a in avoid.split(",") if a.strip()]}}
+        return "approved" if words[:1] and words[0].startswith("y") else "rejected"
     if kind == "captcha":
         await asyncio.to_thread(input, f"\n{prompt}\nPress Enter when done > ")
         return "done"

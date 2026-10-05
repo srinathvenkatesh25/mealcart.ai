@@ -210,3 +210,59 @@ def test_bad_request_is_422(body):
 def test_unknown_run():
     with TestClient(create_app(World().deps())) as client:
         assert client.get("/api/runs/run_nope").status_code == 404
+
+
+def test_swap_a_meal_before_approving():
+    from fakes import meal
+    world = World(login_code=False)
+    with TestClient(create_app(world.deps())) as client:
+        run_id = start(client)
+        with client.websocket_connect(f"/api/runs/{run_id}/events") as ws:
+            first_plan, _ = receive_until(ws, "plan.ready")
+            assert "masoor_dal" in str(first_plan["meal_plan"]["days"][0]["meals"][2])
+            receive_until(ws, "hitl.required")
+            world.llms[0].replies["swap"] = [
+                meal("dinner", [("chicken_breast", 150), ("basmati_rice", 80), ("onion", 50), ("vegetable_oil", 10)],
+                     title="Chicken pulao"),
+            ]
+            ws.send_json({"type": "hitl.response", "kind": "plan_approval", "value": {"swap": {
+                "day": "monday", "slot": "dinner", "reason": "not a fan of dal", "avoid": ["masoor dal"]}}})
+
+            second_plan, seen = receive_until(ws, "plan.ready")
+            progress = [m["message"] for m in seen if m["type"] == "run.progress"]
+            assert "New dinner: Chicken pulao" in progress
+            dinner = second_plan["meal_plan"]["days"][0]["meals"][2]
+            assert dinner["title"] == "Chicken pulao" and dinner["slot"] == "dinner"
+            # Same-day meals keep their dishes; only their grams are re-balanced to the day's targets.
+            before, after = first_plan["meal_plan"]["days"][0]["meals"], second_plan["meal_plan"]["days"][0]["meals"]
+            assert [m["title"] for m in after[:2]] == [m["title"] for m in before[:2]]
+            assert [[i["name"] for i in m["ingredients"]] for m in after[:2]] == \
+                   [[i["name"] for i in m["ingredients"]] for m in before[:2]]
+            assert "masoor_dal" not in {i["name"] for i in second_plan["grocery_list"]["items"]}
+            assert abs(second_plan["per_day"]["Monday"]["calories_delta"]) <= 100  # re-sized to target
+
+            again, _ = receive_until(ws, "hitl.required")
+            assert again["kind"] == "plan_approval" and world.launches == 0  # still nothing bought
+            ws.send_json({"type": "hitl.response", "kind": "plan_approval", "value": "approved"})
+            done, _ = receive_until(ws, "cart.ready")
+
+        assert world.launches == 1
+        assert "masoor dal" in client.get(f"/api/runs/{run_id}").json()["meal_spec_json"]["dislikes"]
+        planning = [p for p, _ in world.llms[0].calls if p not in ("store", "probe", "pick")]
+        assert planning == ["plan", "swap"]  # one call for the swap, no repairs needed
+        swap_prompt = world.llms[0].calls[1][1]
+        assert "not a fan of dal" in swap_prompt and "Monday's dinner" in swap_prompt
+
+
+def test_swap_of_missing_meal_asks_again_without_llm():
+    world = World(login_code=False)
+    with TestClient(create_app(world.deps())) as client:
+        run_id = start(client)
+        with client.websocket_connect(f"/api/runs/{run_id}/events") as ws:
+            receive_until(ws, "hitl.required")
+            ws.send_json({"type": "hitl.response", "kind": "plan_approval",
+                          "value": {"swap": {"day": "Friday", "slot": "dinner"}}})  # 1-day plan
+            again, seen = receive_until(ws, "hitl.required")
+            assert again["kind"] == "plan_approval"
+            assert "There's no dinner on Friday to swap" in [m.get("message") for m in seen]
+        assert [p for p, _ in world.llms[0].calls] == ["plan"]

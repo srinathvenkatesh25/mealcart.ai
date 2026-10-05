@@ -40,7 +40,9 @@ python scripts/run_cli.py                  # default preferences inside the scri
 python scripts/run_cli.py my_spec.json     # or your own MealSpec JSON
 ```
 
-It shows the week's plan and grocery list, asks you to approve, opens Chrome and fills
+It shows the week's plan and grocery list and asks you to approve. Type
+`swap tuesday dinner` to replace a meal you don't like; the list is rebuilt and you're asked
+again. Once you approve, it opens Chrome and fills
 your Instacart cart, then prints the verified cart. Questions (approval, login code,
 substitutions, clearing the cart) are asked in the terminal. It never checks out.
 

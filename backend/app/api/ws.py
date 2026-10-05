@@ -1,6 +1,8 @@
 """WS /api/runs/{run_id}/events?since=<seq> — live events in, answers out.
 
 Client → server:  {"type": "hitl.response", "kind": "...", "value": ..., "event_id"?: "..."}
+  plan_approval values: "approved" | "rejected" | {"edit": GroceryList}
+                        | {"swap": {"day": "Tuesday", "slot": "dinner", "reason"?: "...", "avoid"?: ["paneer"]}}
 Server → client:  the events in hitl/events.py, plus {"type": "hitl.rejected", "reason"} for
 answers that don't match the open question (stale or wrong kind).
 Answer values are never logged or stored.

@@ -275,6 +275,14 @@ Every failure produces one mechanical hint naming the day, meal and biggest cont
 
 ## 14. Pauses, websocket and API
 
+**Changing the plan before shopping.** At `plan_approval` you can approve, reject, edit the
+grocery list, or **swap a meal**: `{"swap": {"day", "slot", "reason"?, "avoid"?}}`.
+- One LLM call replaces that meal; the rest of the week is untouched.
+- `avoid` ingredients join the run's dislikes.
+- Only that day is re-sized, then re-validated (repairs if needed), and the list is rebuilt.
+- You approve again. Nothing reaches Instacart until you approve.
+- Editing after the cart is filled is not supported: start a new run and choose "clear".
+
 **Two pause mechanisms:**
 - **Node boundary:** `plan_approval` uses LangGraph `interrupt()` and resumes with `Command(resume=value)`.
 - **Inside `shop`:** `SessionRegistry[run_id] = {ctx, page, pending: Future}`. The shop node `await`s `registry.ask(run_id, kind, prompt)`, and the websocket handler resolves the Future. The browser never closes. Responses never touch the checkpointer.

@@ -2,7 +2,7 @@
 
 import json
 
-from app.models import DayPlan, MealSpec
+from app.models import DayPlan, Meal, MealPlan, MealSpec
 from app.nutrition.maps import ALIAS, MANUAL_MACROS
 
 SKILL_GUIDANCE = {
@@ -54,6 +54,12 @@ MealPlan with exactly these days, in order: {days}. Keep everything not mentione
 {problems}"""
 
 
+SWAP_USER = """Replace {day}'s {slot}, "{title}", with a different meal for the same slot.
+{reason}Aim near {kcal:.0f} kcal and {protein:.0f} g protein for this meal (software fine-tunes the grams).
+Do not reuse any of these meal titles: {taken}.
+Return one Meal with slot="{slot}"."""
+
+
 def _slots(spec: MealSpec) -> list[str]:
     return (["breakfast", "mid_morning", "lunch", "evening", "dinner"] if spec.include_snacks
             else ["breakfast", "lunch", "dinner"])
@@ -96,3 +102,12 @@ def repair_user(failing: list[DayPlan], hints: dict[str, list[str]]) -> str:
         for d in failing
     )
     return REPAIR_USER.format(days=", ".join(d.day for d in failing), problems=problems)
+
+
+def swap_user(plan: MealPlan, day: str, meal: Meal, reason: str, kcal: float, protein: float) -> str:
+    taken = sorted({m.title for d in plan.days for m in d.meals})
+    return SWAP_USER.format(
+        day=day, slot=meal.slot, title=meal.title,
+        reason=f"The user's reason: {reason}\n" if reason else "",
+        kcal=kcal, protein=protein, taken="; ".join(taken),
+    )
