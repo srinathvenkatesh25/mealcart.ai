@@ -8,7 +8,7 @@ USDA nutrition data, then fills your Instacart cart using a real Chrome session.
 filled, verified cart. **It has no checkout code path, and the browser it opens refuses checkout
 and payment pages.**
 
-Size: about 3,500 lines of Python, 1,300 lines of TypeScript, 218 automated tests.
+Size: about 3,500 lines of Python, 1,300 lines of TypeScript, 233 automated tests.
 
 ## 2. How a run works
 
@@ -52,14 +52,14 @@ solve → validate → consolidate and asks you again.
 | **Contradictory input** | "Vegetarian" ticked with "Main protein: chicken": every chicken meal failed validation and a full-week repair was attempted. | Conflicts resolved at intake with a visible notice; the prompt spells out what each restriction forbids. |
 | **Optimistic AI timings** | "One-pot chicken pulao" labelled 5 minutes; "2-minute" snacks made from dried chickpeas. | Minimum cooking times for rice, dal, dried beans, raw meat and potato; meals can only be raised, and impossible ones are swapped. On real saved plans this corrected 10 to 14 of 35 meals and flagged 2 as impossible. |
 | **Lost work on restart** | Stopping the server while waiting for approval resolved the question and failed the run on restart. | An unanswered approval stays open in the database; the run resumes from its checkpoint without re-planning. Other interrupted runs fail visibly. |
-| **Stale server** | A fix didn't take effect because the server was never restarted. | The README says to restart after backend changes and lists the symptoms. |
+| **Stale server** | A fix didn't take effect because the server was never restarted. | RUNNING.md says to restart after backend changes and lists the symptoms. |
 | **Hidden vs visible browser** | Shopping first opened a visible Chrome window, which is unnecessary when you're signed in. | `BROWSER_MODE`: `auto` (default) shops hidden and opens a window only for sign-in; `hidden`; `visible`. Hidden Chrome is easier for a site to flag as a bot and can't pass a CAPTCHA, so a human check mid-run stops the run with an explanation instead of reporting items as "unavailable". Live runs against Instacart worked hidden. |
 | **Terms of service** | Instacart's terms discourage automated access. | Personal, human-paced use on one account, one run at a time (profile lock); the AI never solves CAPTCHAs, you do. |
 | **Layout changes** | Selectors can break when Instacart changes its pages. | Role and accessible-name selectors, all in one file ([instacart.py](../backend/app/shopping/instacart.py)); parsers tested on captured page text. |
 
 ## 5. What was verified
 
-- **218 automated tests.** Unit tests for the validator, solver, USDA ranking, pack-size parsing,
+- **233 automated tests.** Unit tests for the validator, solver, USDA ranking, pack-size parsing,
   consolidator, timing floors and the checkout guard; graph tests for repair, swap and approval;
   full API and websocket runs (login pause, approval after a server restart, reconnect replay,
   secrets absent from the database); and browser tests of login, saved sessions and the guard in
@@ -93,5 +93,5 @@ solve → validate → consolidate and asks you again.
 
 ## 7. Running it
 
-See the [README](../README.md): setup, the two commands to run, a five-minute demo script, and a
+See [RUNNING.md](../RUNNING.md): setup, the two commands to run, a five-minute demo script, and a
 troubleshooting table for every failure above.

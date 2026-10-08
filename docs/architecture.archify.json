@@ -1,0 +1,572 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "MealCart: how a run works",
+    "output": "docs/architecture.html",
+    "quality_profile": "showcase",
+    "locale": "en",
+    "repository": {
+      "url": "https://github.com/srinathvenkatesh25/mealcart.ai.git",
+      "provider": "github",
+      "link_mode": "web",
+      "revision": "1c3682d430b9ca1903a294564160c8b816254727"
+    }
+  },
+  "components": [
+    {
+      "id": "you",
+      "type": "external",
+      "label": "You",
+      "sublabel": "in your browser",
+      "pos": [
+        40,
+        320
+      ],
+      "size": [
+        150,
+        64
+      ]
+    },
+    {
+      "id": "page",
+      "type": "frontend",
+      "label": "MealCart page",
+      "sublabel": "Next.js 16 \u00b7 :3000",
+      "pos": [
+        246,
+        320
+      ],
+      "size": [
+        150,
+        64
+      ],
+      "sources": [
+        {
+          "path": "frontend/app/page.tsx",
+          "line": 34,
+          "end_line": 175,
+          "label": "page"
+        },
+        {
+          "path": "frontend/lib/useRun.ts",
+          "line": 161,
+          "end_line": 188,
+          "label": "websocket + reconnect"
+        },
+        {
+          "path": "frontend/lib/api.ts",
+          "line": 23,
+          "end_line": 35,
+          "label": "start a run"
+        }
+      ]
+    },
+    {
+      "id": "api",
+      "type": "backend",
+      "label": "API server",
+      "sublabel": "FastAPI \u00b7 :8000",
+      "pos": [
+        482,
+        320
+      ],
+      "size": [
+        150,
+        64
+      ],
+      "sources": [
+        {
+          "path": "backend/app/main.py",
+          "line": 19,
+          "end_line": 49,
+          "label": "app + checkpointer"
+        },
+        {
+          "path": "backend/app/api/runs.py",
+          "line": 16,
+          "end_line": 28,
+          "label": "POST /api/runs"
+        },
+        {
+          "path": "backend/app/api/ws.py",
+          "line": 23,
+          "end_line": 76,
+          "label": "events websocket"
+        }
+      ]
+    },
+    {
+      "id": "runner",
+      "type": "backend",
+      "label": "Run graph",
+      "sublabel": "LangGraph \u00b7 plan to shop",
+      "pos": [
+        738,
+        320
+      ],
+      "size": [
+        150,
+        64
+      ],
+      "sources": [
+        {
+          "path": "backend/app/graph/graph.py",
+          "line": 25,
+          "end_line": 49,
+          "label": "graph wiring"
+        },
+        {
+          "path": "backend/app/graph/runner.py",
+          "line": 90,
+          "end_line": 107,
+          "label": "drives a run"
+        },
+        {
+          "path": "backend/app/graph/nodes.py",
+          "line": 110,
+          "end_line": 135,
+          "label": "approval pause"
+        }
+      ]
+    },
+    {
+      "id": "shopper",
+      "type": "backend",
+      "label": "Shopper",
+      "sublabel": "stores \u00b7 picks \u00b7 verify",
+      "pos": [
+        1004,
+        320
+      ],
+      "size": [
+        150,
+        64
+      ],
+      "sources": [
+        {
+          "path": "backend/app/shopping/shopper.py",
+          "line": 208,
+          "end_line": 295,
+          "label": "fill carts"
+        },
+        {
+          "path": "backend/app/shopping/shopper.py",
+          "line": 107,
+          "end_line": 141,
+          "label": "rank stores"
+        },
+        {
+          "path": "backend/app/graph/nodes.py",
+          "line": 191,
+          "end_line": 203,
+          "label": "shop step"
+        }
+      ]
+    },
+    {
+      "id": "chrome",
+      "type": "backend",
+      "label": "Chrome",
+      "sublabel": "Playwright \u00b7 hidden",
+      "pos": [
+        1246,
+        320
+      ],
+      "size": [
+        150,
+        64
+      ],
+      "sources": [
+        {
+          "path": "backend/app/shopping/instacart.py",
+          "line": 275,
+          "end_line": 303,
+          "label": "open + sign in"
+        },
+        {
+          "path": "backend/app/shopping/session.py",
+          "line": 87,
+          "end_line": 90,
+          "label": "launch profile"
+        },
+        {
+          "path": "backend/app/shopping/guard.py",
+          "line": 50,
+          "end_line": 63,
+          "label": "checkout guard"
+        }
+      ]
+    },
+    {
+      "id": "instacart",
+      "type": "external",
+      "label": "Instacart",
+      "sublabel": "one cart per store",
+      "pos": [
+        1456,
+        320
+      ],
+      "size": [
+        150,
+        64
+      ],
+      "sources": [
+        {
+          "path": "backend/app/shopping/instacart.py",
+          "line": 170,
+          "end_line": 190,
+          "label": "search results"
+        }
+      ]
+    },
+    {
+      "id": "llm",
+      "type": "backend",
+      "label": "AI client",
+      "sublabel": "falls back across models",
+      "pos": [
+        738,
+        170
+      ],
+      "size": [
+        150,
+        64
+      ],
+      "sources": [
+        {
+          "path": "backend/app/planner/llm.py",
+          "line": 160,
+          "end_line": 196,
+          "label": "fallback + waits"
+        },
+        {
+          "path": "backend/app/planner/llm.py",
+          "line": 113,
+          "end_line": 132,
+          "label": "model order"
+        },
+        {
+          "path": "backend/app/planner/planner.py",
+          "line": 53,
+          "end_line": 61,
+          "label": "plan the week"
+        }
+      ]
+    },
+    {
+      "id": "aimodels",
+      "type": "external",
+      "label": "Gemini, then Groq",
+      "sublabel": "free-tier AI models",
+      "pos": [
+        738,
+        40
+      ],
+      "size": [
+        150,
+        64
+      ],
+      "sources": [
+        {
+          "path": "backend/app/config.py",
+          "line": 18,
+          "label": "fallback list"
+        },
+        {
+          "path": "backend/app/planner/llm.py",
+          "line": 92,
+          "end_line": 97,
+          "label": "providers"
+        }
+      ]
+    },
+    {
+      "id": "registry",
+      "type": "backend",
+      "label": "Pause registry",
+      "sublabel": "waits for your answer",
+      "pos": [
+        640,
+        470
+      ],
+      "size": [
+        150,
+        64
+      ],
+      "sources": [
+        {
+          "path": "backend/app/graph/registry.py",
+          "line": 49,
+          "end_line": 74,
+          "label": "ask and wait"
+        }
+      ]
+    },
+    {
+      "id": "nutrition",
+      "type": "backend",
+      "label": "Nutrition checks",
+      "sublabel": "portions \u00b7 rules \u00b7 timing",
+      "pos": [
+        1004,
+        470
+      ],
+      "size": [
+        150,
+        64
+      ],
+      "sources": [
+        {
+          "path": "backend/app/nutrition/solver.py",
+          "line": 49,
+          "end_line": 103,
+          "label": "portion solver"
+        },
+        {
+          "path": "backend/app/nutrition/validator.py",
+          "line": 105,
+          "end_line": 166,
+          "label": "validator"
+        },
+        {
+          "path": "backend/app/nutrition/timing.py",
+          "line": 66,
+          "end_line": 78,
+          "label": "cooking times"
+        }
+      ]
+    },
+    {
+      "id": "usda",
+      "type": "external",
+      "label": "USDA FoodData",
+      "sublabel": "nutrition search API",
+      "pos": [
+        1246,
+        470
+      ],
+      "size": [
+        150,
+        64
+      ],
+      "sources": [
+        {
+          "path": "backend/app/nutrition/usda.py",
+          "line": 143,
+          "end_line": 163,
+          "label": "lookup + cache"
+        }
+      ]
+    },
+    {
+      "id": "storage",
+      "type": "database",
+      "label": "SQLite files",
+      "sublabel": "runs \u00b7 checkpoints",
+      "pos": [
+        738,
+        620
+      ],
+      "size": [
+        150,
+        64
+      ],
+      "sources": [
+        {
+          "path": "backend/app/db.py",
+          "line": 16,
+          "end_line": 75,
+          "label": "tables"
+        },
+        {
+          "path": "backend/app/main.py",
+          "line": 27,
+          "label": "checkpointer"
+        }
+      ]
+    },
+    {
+      "id": "profile",
+      "type": "database",
+      "label": "Chrome profile",
+      "sublabel": "saved Instacart login",
+      "pos": [
+        1246,
+        170
+      ],
+      "size": [
+        150,
+        64
+      ],
+      "sources": [
+        {
+          "path": "backend/app/shopping/session.py",
+          "line": 68,
+          "label": "profiles/<user>"
+        }
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "Runs on your Mac (localhost)",
+      "wraps": [
+        "page",
+        "api",
+        "runner",
+        "llm",
+        "registry",
+        "nutrition",
+        "storage",
+        "shopper"
+      ]
+    },
+    {
+      "kind": "security-group",
+      "label": "Checkout and payment blocked",
+      "wraps": [
+        "chrome",
+        "profile"
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "you-page",
+      "from": "you",
+      "to": "page",
+      "variant": "emphasis"
+    },
+    {
+      "id": "page-api",
+      "from": "page",
+      "to": "api",
+      "label": "REST + WS",
+      "variant": "emphasis"
+    },
+    {
+      "id": "api-runner",
+      "from": "api",
+      "to": "runner",
+      "label": "start run",
+      "variant": "emphasis"
+    },
+    {
+      "id": "runner-shopper",
+      "from": "runner",
+      "to": "shopper",
+      "label": "after approval",
+      "variant": "emphasis"
+    },
+    {
+      "id": "shopper-chrome",
+      "from": "shopper",
+      "to": "chrome",
+      "label": "Playwright",
+      "variant": "emphasis"
+    },
+    {
+      "id": "chrome-instacart",
+      "from": "chrome",
+      "to": "instacart",
+      "label": "HTTPS",
+      "variant": "security"
+    },
+    {
+      "id": "runner-llm",
+      "from": "runner",
+      "to": "llm",
+      "label": "plan \u00b7 repair \u00b7 swap"
+    },
+    {
+      "id": "llm-models",
+      "from": "llm",
+      "to": "aimodels",
+      "label": "HTTPS"
+    },
+    {
+      "id": "runner-nutrition",
+      "from": "runner",
+      "to": "nutrition",
+      "label": "size \u00b7 check"
+    },
+    {
+      "id": "shopper-nutrition",
+      "from": "shopper",
+      "to": "nutrition",
+      "label": "re-check swaps",
+      "variant": "dashed"
+    },
+    {
+      "id": "nutrition-usda",
+      "from": "nutrition",
+      "to": "usda",
+      "label": "search"
+    },
+    {
+      "id": "runner-registry",
+      "from": "runner",
+      "to": "registry",
+      "label": "ask you"
+    },
+    {
+      "id": "api-registry",
+      "from": "api",
+      "to": "registry",
+      "label": "events \u00b7 answers",
+      "fromSide": "bottom",
+      "toSide": "left"
+    },
+    {
+      "id": "runner-storage",
+      "from": "runner",
+      "to": "storage",
+      "label": "save state"
+    },
+    {
+      "id": "chrome-profile",
+      "from": "chrome",
+      "to": "profile",
+      "label": "login"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "rose",
+      "title": "Never checks out",
+      "items": [
+        "No code path places an order",
+        "Chrome blocks checkout and payment requests",
+        "Login codes and passwords are never stored"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "AI calls",
+      "items": [
+        "The week is planned in one call",
+        "Only failing days are sent for repair",
+        "Python does all macro and pack arithmetic"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Stores",
+      "items": [
+        "Stores ranked by hard-to-find items they stock",
+        "Missing items bought at the next store, up to 3",
+        "Each store is a separate cart"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Pauses",
+      "items": [
+        "Plan approval survives a server restart",
+        "Login codes, CAPTCHAs and swaps wait with Chrome open"
+      ]
+    }
+  ]
+}
