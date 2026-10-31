@@ -3,8 +3,10 @@
 Deterministic Playwright only. Selectors use roles and accessible names seen
 on the live site (Oct 2026):
 - search results live in a region named 'Results for "<query>"';
-- each product is a group named "Product" with an h3 name, a
-  "Current price: $X" line, a size line and an "Add 1 <unit> <name>" button;
+- each product is a group with an h3 name, a "Current price: $X" line, a size line and an
+  "Add 1 <unit> <name>" button. The group used to be named "Product"; since late Oct 2026 it is
+  named after the product, so cards are found as groups that contain an h3. Promoted carousels
+  ("slide N of M" groups) sit inside the results without "Sponsored" text and are skipped;
 - right after adding, the card shows "Quantity: N <unit>" and buttons
   "Increment quantity of <name>" / "Remove <name>" / "Decrement quantity of <name>";
 - on a later page load, an in-cart product shows only a collapsed
@@ -31,6 +33,8 @@ from app.shopping.session import (
 
 BASE = "https://www.instacart.com"
 RESULTS_TIMEOUT_MS = 15000
+PRODUCT_CARD = ('[role="group"]:has(h3):not([aria-label^="slide "]):not([aria-label^="slide "] *)'
+                ':not([aria-label="items carousel"] *)')
 MAX_CLICKS_PER_ITEM = 12
 
 PRICE_RE = re.compile(r"Current price:\s*\$([\d,]+(?:\.\d+)?)")
@@ -152,8 +156,12 @@ class InstacartSite:
 
     async def _results(self, store: str, query: str):
         await self.page.goto(f"{BASE}/store/{store}/s?k={quote_plus(query)}", wait_until="domcontentloaded")
-        region = self.page.get_by_role("region", name=re.compile(r"^Results for"))
-        cards = region.get_by_role("group", name="Product")
+        # Match this query's results: Instacart swaps results in place, so a bare "Results for"
+        # can still be the previous search's cards for a moment.
+        region = self.page.get_by_role("region", name=re.compile(rf"^Results for\W+{re.escape(query)}\W*$", re.I))
+        # Product cards are groups with an h3. Skip promoted carousels inside the results ("slide 1 of 5"
+        # wrappers and anything in them): their products are ads and carry no "Sponsored" text.
+        cards = region.locator(PRODUCT_CARD)
         try:
             await cards.first.wait_for(timeout=RESULTS_TIMEOUT_MS)
         except PlaywrightTimeoutError:
