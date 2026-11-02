@@ -1,0 +1,86 @@
+{
+  "$defs": {
+    "Ingredient": {
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "grams": {
+          "exclusiveMinimum": 0,
+          "title": "Grams",
+          "type": "number"
+        },
+        "preparation": {
+          "default": "",
+          "title": "Preparation",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "grams"
+      ],
+      "title": "Ingredient",
+      "type": "object"
+    }
+  },
+  "properties": {
+    "slot": {
+      "enum": [
+        "breakfast",
+        "mid_morning",
+        "lunch",
+        "evening",
+        "dinner"
+      ],
+      "title": "Slot",
+      "type": "string"
+    },
+    "title": {
+      "title": "Title",
+      "type": "string"
+    },
+    "ingredients": {
+      "items": {
+        "$ref": "#/$defs/Ingredient"
+      },
+      "title": "Ingredients",
+      "type": "array"
+    },
+    "steps": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Steps",
+      "type": "array"
+    },
+    "prep_minutes": {
+      "minimum": 0,
+      "title": "Prep Minutes",
+      "type": "integer"
+    },
+    "equipment_used": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Equipment Used",
+      "type": "array"
+    },
+    "notes": {
+      "default": "",
+      "title": "Notes",
+      "type": "string"
+    }
+  },
+  "required": [
+    "slot",
+    "title",
+    "ingredients",
+    "prep_minutes"
+  ],
+  "title": "Meal",
+  "type": "object"
+}

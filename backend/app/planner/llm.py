@@ -424,6 +424,7 @@ class LLM:
     async def _call_once(self, idx: int, schema: type[T], messages: list[dict], purpose: str, run_id: str | None,
                          temperature: float, timeout: float) -> T:
         target = self.targets[idx]
+        started = time.monotonic()
         usage_opts = {"stream_options": {"include_usage": True}}
         if target.json_schema_supported:
             try:
@@ -438,7 +439,7 @@ class LLM:
                     raise
                 target.json_schema_supported = False  # endpoint can't do json_schema; use json_object
             else:
-                await self._log(resp, purpose, run_id, target.model)
+                await self._log(resp, purpose, run_id, target.model, started)
                 parsed = resp.choices[0].message.parsed
                 if parsed is None:
                     raise LLMOutputError("empty or refused reply")
@@ -470,11 +471,12 @@ class LLM:
             await self._watch(collect(), timeout, idx)
         finally:
             await stream.close()
-        await self._log(SimpleNamespace(usage=usage), purpose, run_id, target.model)
+        await self._log(SimpleNamespace(usage=usage), purpose, run_id, target.model, started)
         return schema.model_validate_json("".join(text))
 
-    async def _log(self, resp, purpose: str, run_id: str | None, model: str) -> None:
+    async def _log(self, resp, purpose: str, run_id: str | None, model: str, started: float) -> None:
+        latency_ms = round((time.monotonic() - started) * 1000)
         usage = resp.usage
         tin, tout = (usage.prompt_tokens, usage.completion_tokens) if usage else (0, 0)
         pin, pout = PRICES_PER_MTOK.get(model, (0.0, 0.0))
-        await db.log_llm_call(run_id, purpose, model, tin, tout, (tin * pin + tout * pout) / 1e6)
+        await db.log_llm_call(run_id, purpose, model, tin, tout, (tin * pin + tout * pout) / 1e6, latency_ms)

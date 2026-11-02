@@ -1,0 +1,163 @@
+{
+  "$defs": {
+    "MacroTargets": {
+      "description": "Daily targets. Carbs and fat are computed for display but never gated.",
+      "properties": {
+        "calories": {
+          "exclusiveMinimum": 0,
+          "title": "Calories",
+          "type": "number"
+        },
+        "protein_g": {
+          "minimum": 0,
+          "title": "Protein G",
+          "type": "number"
+        }
+      },
+      "required": [
+        "calories",
+        "protein_g"
+      ],
+      "title": "MacroTargets",
+      "type": "object"
+    }
+  },
+  "properties": {
+    "user_id": {
+      "default": "user_default",
+      "title": "User Id",
+      "type": "string"
+    },
+    "days": {
+      "default": 7,
+      "maximum": 7,
+      "minimum": 1,
+      "title": "Days",
+      "type": "integer"
+    },
+    "macros": {
+      "$ref": "#/$defs/MacroTargets"
+    },
+    "cuisines": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Cuisines",
+      "type": "array"
+    },
+    "budget_weekly_usd": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Budget Weekly Usd"
+    },
+    "zip_code": {
+      "description": "US ZIP; checked against Instacart's delivery address",
+      "pattern": "^\\d{5}$",
+      "title": "Zip Code",
+      "type": "string"
+    },
+    "include_snacks": {
+      "default": true,
+      "title": "Include Snacks",
+      "type": "boolean"
+    },
+    "allergies": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Allergies",
+      "type": "array"
+    },
+    "dietary_restrictions": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Dietary Restrictions",
+      "type": "array"
+    },
+    "dislikes": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Dislikes",
+      "type": "array"
+    },
+    "protein_source": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Protein Source"
+    },
+    "max_prep_minutes": {
+      "default": 30,
+      "exclusiveMinimum": 0,
+      "title": "Max Prep Minutes",
+      "type": "integer"
+    },
+    "effort_level": {
+      "default": "low_moderate",
+      "enum": [
+        "low",
+        "low_moderate",
+        "moderate",
+        "high"
+      ],
+      "title": "Effort Level",
+      "type": "string"
+    },
+    "cooking_skill": {
+      "default": "basic",
+      "enum": [
+        "basic",
+        "intermediate",
+        "advanced"
+      ],
+      "title": "Cooking Skill",
+      "type": "string"
+    },
+    "equipment": {
+      "default": [
+        "stove",
+        "microwave",
+        "oven",
+        "rice_cooker"
+      ],
+      "items": {
+        "type": "string"
+      },
+      "title": "Equipment",
+      "type": "array"
+    },
+    "pantry": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Pantry",
+      "type": "array"
+    }
+  },
+  "required": [
+    "macros",
+    "zip_code"
+  ],
+  "title": "MealSpec",
+  "type": "object"
+}

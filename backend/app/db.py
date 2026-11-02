@@ -60,6 +60,7 @@ CREATE TABLE IF NOT EXISTS llm_calls (
   input_tokens INTEGER NOT NULL,
   output_tokens INTEGER NOT NULL,
   cost_usd REAL NOT NULL,
+  latency_ms INTEGER,                -- request to last token, for this model's answer
   created_at TEXT NOT NULL
 );
 
@@ -93,6 +94,9 @@ async def init_db() -> None:
             have = {row[1] for row in await cur.fetchall()}
         if "nutrition_json" not in have:
             await db.execute("ALTER TABLE runs ADD COLUMN nutrition_json TEXT")
+        async with db.execute("PRAGMA table_info(llm_calls)") as cur:
+            if "latency_ms" not in {row[1] for row in await cur.fetchall()}:
+                await db.execute("ALTER TABLE llm_calls ADD COLUMN latency_ms INTEGER")
         await db.execute(
             "INSERT OR IGNORE INTO users (id, created_at) VALUES (?, ?)",
             (get_settings().single_user_id, _now()),
@@ -228,11 +232,13 @@ async def llm_usage(run_id: str) -> dict[str, Any]:
     """AI calls made for one run: totals, and a per-model breakdown."""
     async with aiosqlite.connect(_db_path()) as db:
         async with db.execute(
-            "SELECT model, COUNT(*), SUM(input_tokens), SUM(output_tokens), SUM(cost_usd) "
+            "SELECT model, COUNT(*), SUM(input_tokens), SUM(output_tokens), SUM(cost_usd), AVG(latency_ms) "
             "FROM llm_calls WHERE run_id = ? GROUP BY model ORDER BY MIN(created_at)", (run_id,)
         ) as cur:
             rows = await cur.fetchall()
-    models = [{"model": m, "calls": n, "tokens": (tin or 0) + (tout or 0)} for m, n, tin, tout, _ in rows]
+    models = [{"model": m, "calls": n, "tokens": (tin or 0) + (tout or 0),
+               "avg_latency_ms": round(lat) if lat is not None else None}
+              for m, n, tin, tout, _, lat in rows]
     return {
         "calls": sum(r[1] for r in rows),
         "input_tokens": sum(r[2] or 0 for r in rows),
@@ -265,13 +271,14 @@ async def latest_prices(user_id: str) -> dict[str, tuple[float, float]]:
 
 
 async def log_llm_call(
-    run_id: str | None, purpose: str, model: str, input_tokens: int, output_tokens: int, cost_usd: float
+    run_id: str | None, purpose: str, model: str, input_tokens: int, output_tokens: int, cost_usd: float,
+    latency_ms: int | None = None,
 ) -> None:
     async with aiosqlite.connect(_db_path()) as db:
         await db.execute(
-            "INSERT INTO llm_calls (id, run_id, purpose, model, input_tokens, output_tokens, cost_usd, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (uuid.uuid4().hex, run_id, purpose, model, input_tokens, output_tokens, cost_usd, _now()),
+            "INSERT INTO llm_calls (id, run_id, purpose, model, input_tokens, output_tokens, cost_usd, latency_ms, "
+            "created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (uuid.uuid4().hex, run_id, purpose, model, input_tokens, output_tokens, cost_usd, latency_ms, _now()),
         )
         if run_id is not None:
             await db.execute(

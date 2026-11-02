@@ -1,0 +1,49 @@
+{
+  "$defs": {
+    "Pick": {
+      "properties": {
+        "item": {
+          "title": "Item",
+          "type": "string"
+        },
+        "index": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "candidate index, or null if no candidate is this food",
+          "title": "Index"
+        },
+        "reason": {
+          "default": "",
+          "title": "Reason",
+          "type": "string"
+        }
+      },
+      "required": [
+        "item",
+        "index"
+      ],
+      "title": "Pick",
+      "type": "object"
+    }
+  },
+  "properties": {
+    "picks": {
+      "items": {
+        "$ref": "#/$defs/Pick"
+      },
+      "title": "Picks",
+      "type": "array"
+    }
+  },
+  "required": [
+    "picks"
+  ],
+  "title": "Picks",
+  "type": "object"
+}

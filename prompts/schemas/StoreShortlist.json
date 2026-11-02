@@ -1,0 +1,22 @@
+{
+  "properties": {
+    "stores": {
+      "description": "up to 4 store slugs, in the order to try them: best first",
+      "items": {
+        "type": "string"
+      },
+      "title": "Stores",
+      "type": "array"
+    },
+    "reason": {
+      "title": "Reason",
+      "type": "string"
+    }
+  },
+  "required": [
+    "stores",
+    "reason"
+  ],
+  "title": "StoreShortlist",
+  "type": "object"
+}

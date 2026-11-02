@@ -103,6 +103,8 @@ async def test_returns_parsed_and_logs_call():
     out = await llm.structured(Pick, "sys", "user", purpose="plan", run_id=run_id)
     assert out.title == "Bhurji"
     assert (await db.get_run(run_id))["llm_cost_usd"] == 0  # free tier
+    model = (await db.llm_usage(run_id))["models"][0]
+    assert model["model"] == "test-model" and model["avg_latency_ms"] is not None and model["avg_latency_ms"] >= 0
 
 
 async def test_retries_once_with_error_feedback():
