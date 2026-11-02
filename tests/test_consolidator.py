@@ -46,6 +46,15 @@ def test_pantry_and_water_are_skipped():
     assert names == {"eggs", "onion", "chicken_breast", "basmati_rice", "masoor_dal"}
 
 
+def test_pantry_matches_regional_spellings():
+    # A pantry of "chilli powder" (UK/Indian spelling) must skip the plan's chili_powder.
+    plan = MealPlan(days=[DayPlan(day="Monday", meals=[
+        meal("lunch", [("chili_powder", 3), ("greek_yogurt", 150), ("onion", 50)]),
+    ])])
+    names = set(by_name(build(plan, spec(pantry=["chilli powder", "Greek yoghurt"]))))
+    assert names == {"onion"}
+
+
 def test_substitutes_attached_and_filtered_by_exclusions():
     plan = MealPlan(days=[DayPlan(day="Monday", meals=[meal("lunch", [("paneer", 200), ("toor_dal", 80)])])])
     items = by_name(build(plan, spec(allergies=["soy"])))

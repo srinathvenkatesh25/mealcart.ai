@@ -58,6 +58,27 @@ export default function CartReview({ report, complete, budget, usage }: {
         </p>
       </div>
 
+      <div className="cart-sum">
+        <div><strong>{usd(report.subtotal_usd)}</strong><small>subtotal before fees</small></div>
+        <div><strong>{report.coverage.length - missing.length}/{report.coverage.length}</strong><small>items covered</small></div>
+        <div><strong>{stores.length}</strong><small>{stores.length === 1 ? "store" : "stores"}</small></div>
+        {budget !== null && (
+          <div>
+            <strong className={report.over_budget_by_usd ? "over" : undefined}>
+              {report.over_budget_by_usd ? `+${usd(report.over_budget_by_usd)}` : usd(Math.max(0, budget - report.subtotal_usd))}
+            </strong>
+            <small>{report.over_budget_by_usd ? `over your ${usd(budget)} budget` : `left of your ${usd(budget)} budget`}</small>
+          </div>
+        )}
+        {budget !== null && budget > 0 && (
+          <div className="cart-sum-bar">
+            <div className={`bar${report.over_budget_by_usd ? " is-over" : ""}`}>
+              <span style={{ width: `${Math.min(100, (report.subtotal_usd / budget) * 100)}%` }} />
+            </div>
+          </div>
+        )}
+      </div>
+
       {!complete && missing.length > 0 && (
         <p className="callout">
           {missing.length} item{missing.length > 1 ? "s aren't" : " isn't"} fully in the cart:{" "}

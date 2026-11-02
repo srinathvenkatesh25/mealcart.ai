@@ -47,11 +47,7 @@ async def run(site, llm, ask_answers=None, plan=None):
 
 def shopping_llm(sub_index=0):
     return ScriptedLLM({
-        "store": [shopper.StoreShortlist(stores=["meijer", "quicklly-grocery"], hard_items=["paneer"], reason="")],
-        "probe": [shopper.Picks(picks=[
-            shopper.Pick(item="meijer: paneer", index=None),           # spinach paneer is a ready meal
-            shopper.Pick(item="quicklly-grocery: paneer", index=1),
-        ])],
+        "store": [shopper.StoreShortlist(stores=["quicklly-grocery", "meijer"], reason="")],
         "pick": [shopper.Picks(picks=[
             shopper.Pick(item="chicken_breast", index=0),
             shopper.Pick(item="paneer", index=1),       # not the tikka masala
@@ -62,22 +58,22 @@ def shopping_llm(sub_index=0):
     })
 
 
-async def test_store_choice_follows_probe_and_cart_is_filled_and_verified():
+async def test_the_first_store_gets_the_list_and_the_cart_is_filled_and_verified():
     site = FakeSite(CATALOG)
     llm = shopping_llm()
     # Toor dal for masoor dal would change the plan's macros; the fake lookup has no toor_dal,
     # so the swap can't be auto-validated and you're asked.
     report, complete, asked, events = await run(site, llm, {"substitution_approval": "yes"})
 
-    assert report.store == "Quicklly Indian Grocery"          # Meijer only has a ready meal
-    assert "Meijer stocks 0/1" in events[0] and "Quicklly Indian Grocery stocks 1/1" in events[1]
+    assert report.store == "Quicklly Indian Grocery"          # the first shortlisted store had everything it could
+    assert events[0] == "Shopping at Quicklly Indian Grocery"
     assert site.adds == [("Halal Chicken Breast", 2), ("Nanak Paneer", 1), ("Rani Toor Dal", 1)]
     assert complete and all(c.covered for c in report.coverage)
     assert asked == ["substitution_approval"]
     assert [l.substituted_for for l in report.lines] == [None, None, "masoor_dal"]
     assert report.subtotal_usd == pytest.approx(9.99 * 2 + 8.79 + 5.99)
     assert report.over_budget_by_usd == pytest.approx(4.76)
-    assert [p for p, _ in llm.calls] == ["store", "probe", "pick", "substitute"]
+    assert [p for p, _ in llm.calls] == ["store", "pick", "substitute"]
 
 
 async def test_declined_substitution_leaves_item_uncovered():
@@ -112,7 +108,7 @@ async def test_rerun_does_not_double_add():
     llm = shopping_llm()
     llm.replies["pick"] = [shopper.Picks(picks=[shopper.Pick(item="paneer", index=0)])]
     report, complete, _, events = await run(site, llm, answers)
-    assert "Already in cart: Nanak Paneer (12 oz) × 1 — $8.79" in events
+    assert "Already in cart at Quicklly Indian Grocery: Nanak Paneer (12 oz) × 1 — $8.79" in events
     pick_prompt = next(u for p, u in llm.calls if p == "pick")
     assert "item: paneer" not in pick_prompt and "item: chicken_breast" not in pick_prompt
     assert complete and {e.name: e.quantity for e in site.cart.values()} == {
@@ -153,8 +149,7 @@ SPLIT_CATALOG = {   # Quicklly has the chicken and paneer but no masoor dal; HMa
 
 def split_llm():
     return ScriptedLLM({
-        "store": [shopper.StoreShortlist(stores=["quicklly-grocery", "hmart"], hard_items=["paneer"], reason="")],
-        "probe": [shopper.Picks(picks=[shopper.Pick(item="quicklly-grocery: paneer", index=0)])],
+        "store": [shopper.StoreShortlist(stores=["quicklly-grocery", "hmart"], reason="")],
         "pick": [
             shopper.Picks(picks=[shopper.Pick(item="chicken_breast", index=0), shopper.Pick(item="paneer", index=0)]),
             shopper.Picks(picks=[shopper.Pick(item="masoor_dal", index=0)]),     # at HMart
@@ -179,7 +174,7 @@ async def test_items_the_first_store_lacks_are_bought_at_the_next_store():
         "chicken_breast": "Quicklly Indian Grocery", "paneer": "Quicklly Indian Grocery", "masoor_dal": "HMart"}
     assert [line.store for line in report.lines] == ["Quicklly Indian Grocery", "Quicklly Indian Grocery", "HMart"]
     assert report.notes[0].startswith("Your list is split across 2 stores (Quicklly Indian Grocery, HMart).")
-    assert [p for p, _ in llm.calls] == ["store", "probe", "pick", "pick"]   # no substitute needed
+    assert [p for p, _ in llm.calls] == ["store", "pick", "pick"]   # no substitute needed
     assert asked == []
 
 
@@ -213,3 +208,139 @@ async def test_second_store_cart_is_asked_about_before_it_is_used():
     assert "Kept 1 item(s) already in your HMart cart" in report.notes
     assert "Also in your HMart cart (not on the list): Old Chips" in report.notes
     assert report.subtotals["HMart"] == pytest.approx(4.49 + 2.99)   # the kept item is in that cart's total
+
+
+class RecordingSite(FakeSite):
+    """Logs every search and add in order, and can search a few items at once like the real site."""
+
+    def __init__(self, catalog, batch_size=None):
+        super().__init__(catalog)
+        self.log: list[tuple[str, str, str]] = []
+        self.batch_size = batch_size or 99     # no limit unless a test sets one
+
+    async def search(self, store, query, item, limit=8):
+        self.log.append(("search", store, item))
+        return await super().search(store, query, item, limit)
+
+    async def search_batch(self, store, requests):
+        assert len(requests) <= self.batch_size
+        return [await self.search(store, q, i) for q, i in requests]
+
+    async def add(self, store, query, product_name, packs):
+        self.log.append(("add", store, product_name))
+        return await super().add(store, query, product_name, packs)
+
+
+def groceries(*names):
+    return GroceryList(items=[GroceryItem(name=n, total_grams=200, purchase_qty="1 pack") for n in names])
+
+
+async def test_other_stores_are_never_searched_when_the_first_has_everything():
+    site = RecordingSite(SPLIT_CATALOG)
+    llm = ScriptedLLM({
+        "store": [shopper.StoreShortlist(stores=["quicklly-grocery", "hmart", "meijer", "aldi"], reason="")],
+        "pick": [shopper.Picks(picks=[shopper.Pick(item="chicken_breast", index=0), shopper.Pick(item="paneer", index=0)])],
+    })
+    await db.init_db()
+    events = []
+
+    async def emit(e):
+        events.append(e["message"])
+
+    async def ask(*a):
+        return "keep"
+
+    report, complete = await shopper.fill_cart(
+        spec(), MealPlan(days=[rough_day()]), groceries("chicken_breast", "paneer"), site=site, llm=llm,
+        lookup=fake_lookup, ask=ask, emit=emit)
+    assert complete
+    assert {store for kind, store, _ in site.log if kind == "search"} == {"quicklly-grocery"}   # nothing else opened
+    assert [p for p, _ in llm.calls] == ["store", "pick"]                                       # no probe, no extra picks
+
+
+async def test_items_are_searched_in_batches_and_added_before_the_next_batch_starts():
+    site = RecordingSite(SPLIT_CATALOG, batch_size=2)
+    llm = ScriptedLLM({
+        "store": [shopper.StoreShortlist(stores=["quicklly-grocery", "hmart"], reason="")],
+        "pick": [shopper.Picks(picks=[shopper.Pick(item="chicken_breast", index=0), shopper.Pick(item="paneer", index=0)]),
+                 shopper.Picks(picks=[shopper.Pick(item="masoor_dal", index=0)])],      # lives at HMart
+    })
+    await db.init_db()
+    events = []
+
+    async def emit(e):
+        events.append(e["message"])
+
+    async def ask(*a):
+        return "keep"
+
+    report, complete = await shopper.fill_cart(
+        spec(), MealPlan(days=[rough_day()]), groceries("chicken_breast", "paneer", "masoor_dal"), site=site, llm=llm,
+        lookup=fake_lookup, ask=ask, emit=emit)
+    assert complete
+    # Quicklly: the first two items are searched together, then added, then the third is searched (and missed).
+    assert site.log[:5] == [("search", "quicklly-grocery", "chicken_breast"), ("search", "quicklly-grocery", "paneer"),
+                            ("add", "quicklly-grocery", "Halal Chicken Breast"), ("add", "quicklly-grocery", "Nanak Paneer"),
+                            ("search", "quicklly-grocery", "masoor_dal")]
+    assert ("add", "hmart", "Laxmi Masoor Dal") in site.log                  # only the missing item went to the next store
+    assert [p for p, _ in llm.calls] == ["store", "pick", "pick"]
+
+
+async def test_a_product_that_cannot_be_added_is_noted_and_the_rest_still_go_in():
+    class Stubborn(RecordingSite):
+        async def add(self, store, query, product_name, packs):
+            if product_name == "Nanak Paneer":
+                raise LookupError("Couldn't add Nanak Paneer at quicklly-grocery: blocked. Add it yourself in Instacart.")
+            return await super().add(store, query, product_name, packs)
+
+    site = Stubborn(SPLIT_CATALOG)
+    llm = ScriptedLLM({
+        "store": [shopper.StoreShortlist(stores=["quicklly-grocery"], reason="")],
+        "pick": [shopper.Picks(picks=[shopper.Pick(item="chicken_breast", index=0), shopper.Pick(item="paneer", index=0)])],
+    })
+    await db.init_db()
+
+    async def emit(e):
+        pass
+
+    async def ask(*a):
+        return "keep"
+
+    report, complete = await shopper.fill_cart(
+        spec(), MealPlan(days=[rough_day()]), groceries("chicken_breast", "paneer"), site=site, llm=llm,
+        lookup=fake_lookup, ask=ask, emit=emit)
+    assert not complete
+    assert any("Couldn't add Nanak Paneer" in n for n in report.notes)
+    assert ("add", "quicklly-grocery", "Halal Chicken Breast") in site.log
+
+
+@pytest.mark.parametrize("reply", [
+    "onion",                                # copied exactly
+    "item: onion",                          # echoed with the prefix
+    "onion (need about 900 g)",             # the header line as written by today's Groq and Gemini replies
+    "item: onion (need about 900 g)",
+    "  Onion  ".lower(),
+])
+def test_pick_labels_match_however_the_model_echoes_them(reply):
+    assert shopper._resolve(reply, ["chicken_breast", "onion", "onion_powder"]) == "onion"
+
+
+def test_pick_label_prefers_the_longest_matching_key_and_ignores_unknowns():
+    keys = ["masoor_dal", "masoor_dal -> toor_dal @ quicklly-grocery"]
+    assert shopper._resolve("masoor_dal -> toor_dal @ quicklly-grocery (need about 80 g)", keys) == keys[1]
+    assert shopper._resolve("something else entirely", keys) is None
+
+
+async def test_picks_survive_a_model_that_echoes_the_whole_header_line():
+    # The incident: Groq and Gemini answered "onion (need about 900 g)", every item looked unavailable, and
+    # a cart with onions, eggs and tomatoes in the store came back "needs a look".
+    class EchoingLLM:
+        async def structured(self, schema, system, user, *, purpose, run_id=None, temperature=0.3):
+            assert "item: onion\n  need about 900 g" in user          # the label is on a line of its own
+            return shopper.Picks(picks=[shopper.Pick(item="onion (need about 900 g)", index=0),
+                                        shopper.Pick(item="item: egg", index=1)])
+
+    got = await shopper._pick(EchoingLLM(), [("onion", 900, [cand(0, "Yellow Onion 3 lb", "3 lb", 2.99, 1360)]),
+                                             ("egg", 480, [cand(0, "A", "6 ct", 1.0, 300), cand(1, "B", "12 ct", 1.6, 600)])],
+                              "pick", None)
+    assert got == {"onion": 0, "egg": 1}

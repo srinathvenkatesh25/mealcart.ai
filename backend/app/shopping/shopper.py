@@ -1,16 +1,19 @@
 """Fill Instacart carts from a grocery list. Never checks out.
 
-The best store gets everything it stocks. Items it lacks are looked for at
-the next-best shortlisted stores, up to MAX_STORES in total (each store is a
-separate cart with its own fee and minimum). Only items no store has fall
-back to substitutes.
+The first shortlisted store gets the whole list. Only the items it doesn't stock are looked for at
+the next shortlisted stores, up to MAX_STORES in total (each store is a separate cart with its own
+fee and minimum). Only items no store has fall back to substitutes.
 
-LLM calls (batched for free-tier quotas): 1 to shortlist stores, 1 to judge
-which shortlisted store really stocks the hard-to-find items, 1 to pick
-products per store used, and at most 1 more to pick substitutes. Everything
-else (searching, pack counts, adding, verification) is deterministic.
+Items are handled a few at a time: the batch is searched in separate browser tabs at once, one LLM
+call picks the products, and each product is added from the tab that already shows it. LLM calls
+(kept few for free-tier quotas): 1 to shortlist stores, 1 per batch of items to pick products, and at
+most 1 more to pick substitutes. Everything else (searching, pack counts, adding, verification) is
+deterministic.
 """
 
+import asyncio
+import re
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Protocol
 
@@ -31,13 +34,13 @@ from app.shopping.verify import build_report
 
 MAX_SHORTLIST = 4
 MAX_STORES = 3          # most stores one list is split across; each has its own cart, fee and minimum
-MAX_PROBE_ITEMS = 4
 MAX_SUBSTITUTES_TRIED = 2
 
 
 class Site(Protocol):
     async def list_stores(self) -> list[tuple[str, str]]: ...
     async def search(self, store: str, query: str, item: str, limit: int = 8) -> list[Candidate]: ...
+    # Optional: sites that can search several items at once expose search_batch, close_tabs and batch_size.
     async def add(self, store: str, query: str, product_name: str, packs: int) -> float: ...
     async def cart_lines(self, store: str) -> list[CartEntry]: ...
     async def clear_cart(self, store: str) -> None: ...
@@ -57,11 +60,11 @@ class Assignment:
     cand: Candidate
     query: str
     substituted_for: str | None = None
+    added: bool = False      # already in the cart (added as soon as its batch was picked)
 
 
 class StoreShortlist(BaseModel):
-    stores: list[str] = Field(description="up to 4 store slugs, best first")
-    hard_items: list[str] = Field(description="up to 4 grocery item names least likely to be stocked everywhere")
+    stores: list[str] = Field(description="up to 4 store slugs, in the order to try them: best first")
     reason: str
 
 
@@ -77,7 +80,9 @@ class Picks(BaseModel):
 
 STORE_SYSTEM = """You choose which grocery store to shop at on Instacart. Reply only with JSON.
 Pick general grocers or specialist grocers that fit the list (e.g. an Indian grocer for
-Indian staples). Avoid membership warehouse clubs (bulk sizes), pharmacies, and non-food stores."""
+Indian staples). Avoid membership warehouse clubs (bulk sizes), pharmacies, and non-food stores.
+Order them best first: the first store is tried for the whole list, and the others are only used,
+in order, for items the earlier ones don't stock."""
 
 PICK_SYSTEM = """You match grocery items to products in a store's search results. Reply only with JSON.
 For each item choose the candidate that IS that food in a plain, ordinary form:
@@ -99,14 +104,17 @@ def _render_candidates(rows: list[tuple[str, float, list[Candidate]]]) -> str:
     blocks = []
     for key, grams, cands in rows:
         opts = "\n".join(f"  [{c.index}] {c.name} — {c.size or '?'} — ${c.price}" for c in cands)
-        need = f" (need about {grams:.0f} g)" if grams else ""
+        need = f"\n  need about {grams:.0f} g" if grams else ""
         blocks.append(f"item: {key}{need}\n{opts}")
     return "\n\n".join(blocks)
 
 
 async def choose_stores(spec: MealSpec, grocery_list: GroceryList, site: Site, llm: StructuredLLM,
                         emit: Emit, run_id: str | None) -> list[Store]:
-    """Shortlisted stores, best first: by how many hard-to-find items they really stock."""
+    """Shortlisted stores in the order to try them (one LLM call, no searching).
+
+    Other stores are only visited later, for the items the stores before them don't stock.
+    """
     stores = await site.list_stores()
     names = dict(stores)
     shortlist = await llm.structured(
@@ -115,30 +123,8 @@ async def choose_stores(spec: MealSpec, grocery_list: GroceryList, site: Site, l
         + "\n\nGrocery list:\n" + "\n".join(i.name for i in grocery_list.items),
         purpose="store", run_id=run_id, temperature=0,
     )
-    slugs = [s for s in shortlist.stores if s in names][:MAX_SHORTLIST] or [stores[0][0]]
-    hard = [i for i in shortlist.hard_items if any(g.name == i for g in grocery_list.items)][:MAX_PROBE_ITEMS]
-    hard = hard or [i.name for i in grocery_list.items[:MAX_PROBE_ITEMS]]
-
-    # Probe: search each shortlisted store for the hard items, then one LLM call judges
-    # every result set with the same "plain form of this food" rule as product picks.
-    # (A word match can't: "Deep Spinach Paneer" contains "paneer" but isn't paneer.)
-    rows, keys = [], {}
-    for slug in slugs:
-        for item in hard:
-            cands = await site.search(slug, search_query(item), item)
-            if cands:
-                key = f"{slug}: {item}"
-                rows.append((key, 0.0, cands))
-                keys[key] = (slug, item)
-    judged = await _pick(llm, rows, "probe", run_id)
-    stocked = {slug: [item for k, (s, item) in keys.items() if s == slug and judged.get(k) is not None]
-               for slug in slugs}
-    for slug in slugs:
-        found = stocked[slug]
-        await emit(events.progress(run_id or "", "shop", f"{names[slug]} stocks {len(found)}/{len(hard)} "
-                                                         f"hard-to-find items ({', '.join(found) or 'none'})"))
-    ranked = sorted(slugs, key=lambda s: -len(stocked[s]))   # stable: the LLM's order breaks ties
-    return [Store(s, names[s]) for s in ranked]
+    slugs = [s for s in dict.fromkeys(shortlist.stores) if s in names][:MAX_SHORTLIST] or [stores[0][0]]
+    return [Store(s, names[s]) for s in slugs]
 
 
 async def _open_store(store: Store, first: bool, *, site: Site, spec: MealSpec, ask: Ask, emit: Emit,
@@ -164,27 +150,47 @@ async def _open_store(store: Store, first: bool, *, site: Site, spec: MealSpec, 
         notes.append(f"Kept {len(existing)} item(s) already in your {store.name} cart")
 
 
+Commit = Callable[[list[tuple[GroceryItem, "Assignment"]]], Awaitable[None]]
+
+
+async def _search_many(site: Site, store: str, items: list[GroceryItem]) -> list[list[Candidate]]:
+    """Search a batch: all at once in separate tabs when the site can, else one by one."""
+    requests = [(search_query(i.name), i.name) for i in items]
+    if hasattr(site, "search_batch"):
+        return await site.search_batch(store, requests)
+    return [await site.search(store, query, name) for query, name in requests]
+
+
 async def _match_at(store: Store, items: list[GroceryItem], *, site: Site, llm: StructuredLLM,
-                    run_id: str | None) -> tuple[dict[str, Assignment], list[GroceryItem]]:
-    """Search one store for these items; one LLM call picks for all of them.
+                    run_id: str | None, commit: Commit) -> tuple[dict[str, Assignment], list[GroceryItem]]:
+    """Search one store for these items, a batch at a time; each batch's products are picked (one LLM
+    call) and handed to `commit` to add before the next batch starts.
 
     A product already in a kept cart is reused for its item, so a re-run never adds a
     second, different product.
     """
-    found = [(item, await site.search(store.slug, search_query(item.name), item.name)) for item in items]
-    reused = {i.name: next(c.index for c in cands if c.name in store.in_cart)
-              for i, cands in found if any(c.name in store.in_cart for c in cands)}
-    asked = await _pick(llm, [(i.name, i.total_grams, c) for i, c in found if c and i.name not in reused],
-                        "pick", run_id)
-    picks = asked | reused  # what's already in the cart wins, even if the LLM answered for it
+    size = getattr(site, "batch_size", None) or max(len(items), 1)
     got: dict[str, Assignment] = {}
     missing: list[GroceryItem] = []
-    for item, cands in found:
-        idx = picks.get(item.name)
-        if idx is not None and 0 <= idx < len(cands) and cands[idx].in_stock:
-            got[item.name] = Assignment(store, cands[idx], search_query(item.name))
-        else:
-            missing.append(item)
+    for start in range(0, len(items), size):
+        batch = items[start : start + size]
+        found = list(zip(batch, await _search_many(site, store.slug, batch)))
+        reused = {i.name: next(c.index for c in cands if c.name in store.in_cart)
+                  for i, cands in found if any(c.name in store.in_cart for c in cands)}
+        asked = await _pick(llm, [(i.name, i.total_grams, c) for i, c in found if c and i.name not in reused],
+                            "pick", run_id)
+        picks = asked | reused  # what's already in the cart wins, even if the LLM answered for it
+        batch_got: list[tuple[GroceryItem, Assignment]] = []
+        for item, cands in found:
+            idx = picks.get(item.name)
+            if idx is not None and 0 <= idx < len(cands) and cands[idx].in_stock:
+                a = Assignment(store, cands[idx], search_query(item.name))
+                got[item.name] = a
+                batch_got.append((item, a))
+            else:
+                missing.append(item)
+        if batch_got:
+            await commit(batch_got)
     return got, missing
 
 
@@ -209,11 +215,50 @@ async def fill_cart(spec: MealSpec, plan: MealPlan, grocery_list: GroceryList, *
                     llm: StructuredLLM, lookup: MacroLookup, ask: Ask, emit: Emit,
                     run_id: str | None = None) -> tuple[CartReport, bool]:
     """Returns the verified report and whether every item is covered (cart_ready)."""
+    try:
+        return await _fill_cart(spec, plan, grocery_list, site=site, llm=llm, lookup=lookup, ask=ask, emit=emit,
+                                run_id=run_id)
+    finally:
+        close = getattr(site, "close_tabs", None)
+        if close:
+            await close()
+
+
+async def _fill_cart(spec: MealSpec, plan: MealPlan, grocery_list: GroceryList, *, site: Site,
+                     llm: StructuredLLM, lookup: MacroLookup, ask: Ask, emit: Emit,
+                     run_id: str | None) -> tuple[CartReport, bool]:
     rid = run_id or ""
     notes: list[str] = []
     ranked = await choose_stores(spec, grocery_list, site, llm, emit, run_id)
+    items_by_name = {i.name: i for i in grocery_list.items}
 
-    # 1. The best store first; whatever it lacks goes to the next store, up to MAX_STORES.
+    async def add_one(item: GroceryItem, a: Assignment) -> None:
+        """Add one product, with pack counts from Python arithmetic. A product Instacart won't let us add is
+        noted on the cart; anything else (e.g. a human check) stops the run."""
+        cand = a.cand
+        packs = packs_needed(item.total_grams, cand.pack_grams) if cand.pack_grams else 1
+        if not cand.pack_grams:
+            notes.append(f"Could not read the size of {cand.name}; added 1, check the amount")
+        try:
+            qty = await site.add(a.store.slug, a.query, cand.name, packs)
+        except LookupError as e:
+            notes.append(str(e))
+            return
+        a.added = True
+        price = f" — ${cand.price * qty:.2f}" if cand.price else ""
+        verb = "Already in cart" if cand.name in a.store.in_cart else "Added"
+        await emit(events.progress(rid, "shop", f"{verb} at {a.store.name}: {cand.name} ({cand.size}) × {qty:g}{price}"))
+        if cand.price and cand.pack_grams:
+            await db.record_price(spec.user_id, canonical_key(item.name), cand.name, cand.pack_grams, cand.price)
+
+    async def commit(batch: list[tuple[GroceryItem, Assignment]]) -> None:
+        """Add a batch's products together (each from its own tab); one failure doesn't stop the others."""
+        results = await asyncio.gather(*(add_one(item, a) for item, a in batch), return_exceptions=True)
+        for r in results:
+            if isinstance(r, BaseException):
+                raise r
+
+    # 1. The first store gets the whole list; what it lacks goes to the next store, up to MAX_STORES.
     assigned: dict[str, Assignment] = {}
     opened: list[Store] = []
     remaining = list(grocery_list.items)
@@ -227,7 +272,7 @@ async def fill_cart(spec: MealSpec, plan: MealPlan, grocery_list: GroceryList, *
                                                     f"Looking at {store.name}"))
         await _open_store(store, n == 0, site=site, spec=spec, ask=ask, emit=emit, rid=rid, notes=notes)
         opened.append(store)
-        got, remaining = await _match_at(store, remaining, site=site, llm=llm, run_id=run_id)
+        got, remaining = await _match_at(store, remaining, site=site, llm=llm, run_id=run_id, commit=commit)
         assigned |= got
         if n > 0 and got:
             await emit(events.progress(rid, "shop", f"{store.name} has {', '.join(got)}"))
@@ -267,26 +312,11 @@ async def fill_cart(spec: MealSpec, plan: MealPlan, grocery_list: GroceryList, *
         notes.insert(0, f"Your list is split across {len(used)} stores ({', '.join(s.name for s in used)}). "
                         "Each is a separate Instacart cart with its own delivery fee and minimum order.")
 
-    # 3. Add to cart; pack counts are Python arithmetic.
+    # 3. Substitutes are the only products not added yet (the rest went in as their batches were picked).
     for item in grocery_list.items:
         a = assigned.get(item.name)
-        if a is None:
-            continue
-        cand = a.cand
-        packs = packs_needed(item.total_grams, cand.pack_grams) if cand.pack_grams else 1
-        if not cand.pack_grams:
-            notes.append(f"Could not read the size of {cand.name}; added 1, check the amount")
-        try:
-            qty = await site.add(a.store.slug, a.query, cand.name, packs)
-        except LookupError as e:
-            notes.append(str(e))
-            continue
-        price = f" — ${cand.price * qty:.2f}" if cand.price else ""
-        verb = "Already in cart" if cand.name in a.store.in_cart else "Added"
-        where = f" at {a.store.name}" if len(used) > 1 else ""
-        await emit(events.progress(rid, "shop", f"{verb}{where}: {cand.name} ({cand.size}) × {qty:g}{price}"))
-        if cand.price and cand.pack_grams:
-            await db.record_price(spec.user_id, canonical_key(item.name), cand.name, cand.pack_grams, cand.price)
+        if a is not None and not a.added:
+            await add_one(items_by_name[item.name], a)
 
     # 4. Verify against the grocery list, from each cart as Instacart shows it.
     carts = {s.name: await site.cart_lines(s.slug) for s in (used or opened[:1])}
@@ -295,9 +325,34 @@ async def fill_cart(spec: MealSpec, plan: MealPlan, grocery_list: GroceryList, *
     return build_report(grocery_list, carts, picked, spec.budget_weekly_usd, notes)
 
 
+def _resolve(label: str, keys: list[str]) -> str | None:
+    """Map what the model wrote back to the item key it was given.
+
+    Models don't always copy the key exactly: they echo "item: onion", or the whole header line
+    ("onion (need about 900 g)"). Matching only exact strings turned every such reply into "not
+    available". Try exact, then the label with the "item:" prefix and any trailing "(...)" removed, then
+    the longest key the label starts with.
+    """
+    label = label.strip()
+    if label in keys:
+        return label
+    cleaned = re.sub(r"^item\s*:\s*", "", label, flags=re.I)
+    cleaned = re.sub(r"\s*\([^)]*\)\s*$", "", cleaned).strip()
+    if cleaned in keys:
+        return cleaned
+    starts = [k for k in keys if cleaned.startswith(k)]
+    return max(starts, key=len) if starts else None
+
+
 async def _pick(llm: StructuredLLM, rows, purpose: str, run_id: str | None) -> dict[str, int | None]:
     if not rows:
         return {}
     reply = await llm.structured(Picks, PICK_SYSTEM, _render_candidates(rows), purpose=purpose,
                                  run_id=run_id, temperature=0)
-    return {p.item: p.index for p in reply.picks}
+    keys = [r[0] for r in rows]
+    picks: dict[str, int | None] = {}
+    for p in reply.picks:
+        key = _resolve(p.item, keys)
+        if key is not None and (key not in picks or picks[key] is None):
+            picks[key] = p.index
+    return picks

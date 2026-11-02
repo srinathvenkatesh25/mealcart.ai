@@ -87,8 +87,6 @@ Open http://localhost:3000. **After changing any backend code, restart terminal 
    Items the best store doesn't stock are bought at the next-best store (up to 3 stores), so the
    review groups items by store with each store's subtotal. Check out each store's cart yourself.
 
-To drive the same flow without the page: `python scripts/run_cli.py`.
-
 ## When something goes wrong
 
 | What you see | Why, and what to do |
@@ -123,9 +121,6 @@ Tests use fake AI and a fake store; the running app never does.
 | Script | What it does |
 |---|---|
 | `scripts/login.py` | Sign in to Instacart once (`--check`, `--manual`) |
-| `scripts/run_cli.py` | A full run from the terminal, through the server |
-| `scripts/plan_demo.py` | Plan a week with the live AI and USDA and print the checks |
-| `scripts/shop_demo.py` | Fill the real cart from a fixed 5-item list |
 
 ## Project layout
 

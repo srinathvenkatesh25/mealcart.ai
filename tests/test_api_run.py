@@ -26,8 +26,7 @@ def catalog():
 def scripted_llm():
     return ScriptedLLM({
         "plan": [week(rough_day("Monday"))],
-        "store": [shopper.StoreShortlist(stores=["quicklly-grocery"], hard_items=["masoor_dal"], reason="")],
-        "probe": [shopper.Picks(picks=[shopper.Pick(item="quicklly-grocery: masoor_dal", index=0)])],
+        "store": [shopper.StoreShortlist(stores=["quicklly-grocery"], reason="")],
         "pick": [shopper.Picks(picks=[shopper.Pick(item=i, index=0) for i in ITEMS])],
     })
 
@@ -256,7 +255,7 @@ def test_swap_a_meal_before_approving():
 
         assert world.launches == 1
         assert "masoor dal" in client.get(f"/api/runs/{run_id}").json()["meal_spec_json"]["dislikes"]
-        planning = [p for p, _ in world.llms[0].calls if p not in ("store", "probe", "pick")]
+        planning = [p for p, _ in world.llms[0].calls if p not in ("store", "pick")]
         assert planning == ["plan", "swap"]  # one call for the swap, no repairs needed
         swap_prompt = world.llms[0].calls[1][1]
         assert "not a fan of dal" in swap_prompt and "Monday's dinner" in swap_prompt

@@ -100,6 +100,8 @@ async def test_window_is_closed_even_if_the_shop_step_fails(world):
     assert w.sessions[0]["closed"]
 
 
-def test_default_mode_is_auto():
-    get_settings.cache_clear()
-    assert get_settings().browser_mode == "auto"
+def test_default_mode_is_auto(monkeypatch):
+    # The built-in default, whatever the developer has put in their own .env or environment.
+    from app.config import Settings
+    monkeypatch.delenv("BROWSER_MODE", raising=False)
+    assert Settings(_env_file=None).browser_mode == "auto"

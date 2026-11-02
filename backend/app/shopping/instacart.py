@@ -16,6 +16,7 @@ on the live site (Oct 2026):
 Ads ("Sponsored") appear inside results and are skipped.
 """
 
+import asyncio
 import re
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -23,6 +24,7 @@ from dataclasses import dataclass
 from urllib.parse import quote_plus
 
 from playwright.async_api import Page
+from playwright.async_api import Error as PlaywrightError
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
 from app.shopping.packs import G_PER, parse_size
@@ -36,6 +38,13 @@ RESULTS_TIMEOUT_MS = 15000
 PRODUCT_CARD = ('[role="group"]:has(h3):not([aria-label^="slide "]):not([aria-label^="slide "] *)'
                 ':not([aria-label="items carousel"] *)')
 MAX_CLICKS_PER_ITEM = 12
+
+
+def _escape(text: str) -> str:
+    """re.escape for patterns Playwright hands to the browser as /…/ JavaScript regexes:
+    a bare "/" (e.g. "95/5 Ground Chicken") would end the pattern early and break the selector."""
+    return re.escape(text).replace("/", r"\/")
+CLICK_TIMEOUT_MS = 8000
 
 PRICE_RE = re.compile(r"Current price:\s*\$([\d,]+(?:\.\d+)?)")
 SIZE_LINE_RE = re.compile(
@@ -134,10 +143,18 @@ def parse_cart_line(text: str) -> CartEntry | None:
 
 
 class InstacartSite:
-    """The live site, driven through one logged-in page."""
+    """The live site, driven through one logged-in page, plus up to `tabs - 1` helper tabs.
 
-    def __init__(self, page: Page):
+    Helper tabs are opened from the same browser context, so they share the sign-in and the checkout
+    guard (which is installed on the context, not on a page). They let several items be searched at once
+    and keep each search open so the product can be added from it without loading the page again.
+    """
+
+    def __init__(self, page: Page, tabs: int = 1):
         self.page = page
+        self.batch_size = max(1, tabs)         # items searched (and then added) together
+        self._extra: list[Page] = []
+        self._held: dict[tuple[str, str], Page] = {}   # (store, query) -> the tab showing those results
         self.delivery_zip: str | None = None   # what Instacart says it delivers to; set when the cart opens
 
     async def list_stores(self) -> list[tuple[str, str]]:
@@ -154,11 +171,13 @@ class InstacartSite:
                 stores.append((slug, name.strip()))
         return stores
 
-    async def _results(self, store: str, query: str):
-        await self.page.goto(f"{BASE}/store/{store}/s?k={quote_plus(query)}", wait_until="domcontentloaded")
+    async def _results(self, store: str, query: str, page: Page | None = None, reuse: bool = False):
+        page = page or self.page
+        if not reuse:
+            await page.goto(f"{BASE}/store/{store}/s?k={quote_plus(query)}", wait_until="domcontentloaded")
         # Match this query's results: Instacart swaps results in place, so a bare "Results for"
         # can still be the previous search's cards for a moment.
-        region = self.page.get_by_role("region", name=re.compile(rf"^Results for\W+{re.escape(query)}\W*$", re.I))
+        region = page.get_by_role("region", name=re.compile(rf"^Results for\W+{_escape(query)}\W*$", re.I))
         # Product cards are groups with an h3. Skip promoted carousels inside the results ("slide 1 of 5"
         # wrappers and anything in them): their products are ads and carry no "Sponsored" text.
         cards = region.locator(PRODUCT_CARD)
@@ -167,16 +186,62 @@ class InstacartSite:
         except PlaywrightTimeoutError:
             # No results can mean "nothing found" or "Instacart wants a human". Don't report the
             # second as the first: every item would look unavailable.
-            if await captcha_present(self.page):
+            if await captcha_present(page):
                 raise HumanCheckError(
                     "Instacart is asking for a human check. Set BROWSER_MODE=visible, run again, and "
                     "solve it in the Chrome window.") from None
             return None
-        await self.page.wait_for_timeout(800)  # let the rest of the grid render
+        await self._settle(cards)
         return cards
 
-    async def search(self, store: str, query: str, item: str, limit: int = 8) -> list[Candidate]:
-        cards = await self._results(store, query)
+    @staticmethod
+    async def _settle(cards) -> None:
+        """Wait for the grid to finish rendering: stop as soon as the card count holds still, instead of
+        a fixed 800 ms every time."""
+        last = -1
+        for _ in range(10):
+            n = await cards.count()
+            if n == last:
+                return
+            last = n
+            await asyncio.sleep(0.12)
+
+    async def _tab(self, i: int) -> Page:
+        if i == 0:
+            return self.page
+        while len(self._extra) < i:
+            self._extra.append(await self.page.context.new_page())
+        return self._extra[i - 1]
+
+    async def search_batch(self, store: str, requests: list[tuple[str, str]]) -> list[list[Candidate]]:
+        """Search up to batch_size items at once, each in its own tab, and keep each tab open: add() for
+        the chosen product reuses it. Results come back in request order."""
+        if len(requests) > self.batch_size:
+            raise ValueError(f"at most {self.batch_size} searches at a time")
+
+        pages = [await self._tab(i) for i in range(len(requests))]    # open the tabs in order, then search together
+
+        async def one(page: Page, query: str, item: str) -> list[Candidate]:
+            found = await self.search(store, query, item, page=page)
+            if found and (store, query) not in self._held:
+                self._held[(store, query)] = page
+            return found
+
+        return list(await asyncio.gather(*(one(pg, q, it) for pg, (q, it) in zip(pages, requests))))
+
+    async def close_tabs(self) -> None:
+        """Close the helper tabs (the main page stays open)."""
+        self._held.clear()
+        for page in self._extra:
+            try:
+                await page.close()
+            except PlaywrightError:
+                pass
+        self._extra.clear()
+
+    async def search(self, store: str, query: str, item: str, limit: int = 8,
+                     page: Page | None = None) -> list[Candidate]:
+        cards = await self._results(store, query, page)
         if cards is None:
             return []
         out: list[Candidate] = []
@@ -197,12 +262,16 @@ class InstacartSite:
                 break
         return out
 
-    async def _card_for(self, store: str, query: str, product_name: str):
-        cards = await self._results(store, query)
-        if cards is None:
-            return None
-        card = cards.filter(has=self.page.locator("h3", has_text=re.compile(rf"^{re.escape(product_name)}$")))
-        return card.first if await card.count() else None
+    async def _card_for(self, store: str, query: str, product_name: str, page: Page | None = None):
+        """The product's card: from the tab that searched for it if there is one, else a fresh search."""
+        for held in ([page] if page is not None else []) + [None]:
+            cards = await self._results(store, query, held, reuse=held is not None)
+            if cards is None:
+                continue
+            card = cards.filter(has=(held or self.page).locator("h3", has_text=re.compile(rf"^{_escape(product_name)}$")))
+            if await card.count():
+                return card.first, (held or self.page)
+        return None, self.page
 
     async def _card_quantity(self, card) -> float:
         collapsed = card.get_by_role("button", name=re.compile(r"^Quantity:", re.I))
@@ -210,15 +279,43 @@ class InstacartSite:
             return parse_quantity(await collapsed.first.get_attribute("aria-label") or "")
         return parse_quantity(await card.inner_text())
 
+    async def _dismiss_overlays(self, page: Page | None = None) -> None:
+        """Close a pop-up Instacart opened over the results (seen Nov 2026: an "iap-modal" after adding
+        an item). Left open, it swallows every click. Escape first, then the pop-up's own close button."""
+        page = page or self.page
+        overlay = page.locator('[data-dialog-ref], [role="dialog"][aria-modal="true"]')
+        for _ in range(3):
+            if not await overlay.count() or not await overlay.first.is_visible():
+                return
+            await page.keyboard.press("Escape")
+            await page.wait_for_timeout(400)
+            if await overlay.count() and await overlay.first.is_visible():
+                close = overlay.first.get_by_role("button", name=re.compile(r"close|dismiss|no thanks|not now|got it", re.I))
+                if await close.count():
+                    await close.first.click(timeout=3000)
+                    await page.wait_for_timeout(400)
+
     async def add(self, store: str, query: str, product_name: str, packs: int) -> float:
+        """Like _add, but a page error on one item becomes a LookupError (noted on the cart), not a stopped run."""
+        try:
+            return await self._add(store, query, product_name, packs)
+        except LookupError:
+            raise
+        except PlaywrightError as e:
+            raise LookupError(f"Couldn't add {product_name} at {store}: {str(e).splitlines()[0][:160]}. "
+                              "Add it yourself in Instacart.") from e
+
+    async def _add(self, store: str, query: str, product_name: str, packs: int) -> float:
         """Make the cart hold at least `packs` of the product; returns the quantity now in the cart.
 
-        Reads the card's quantity first, so re-running never adds twice.
+        Reads the card's quantity first, so re-running never adds twice. A click Instacart keeps
+        blocking becomes a LookupError, so one stubborn item is noted on the cart instead of
+        stopping the whole run.
         """
-        card = await self._card_for(store, query, product_name)
+        card, page = await self._card_for(store, query, product_name, self._held.pop((store, query), None))
         if card is None:
             raise LookupError(f"'{product_name}' not found when searching '{query}' at {store}")
-        name_re = re.escape(product_name)
+        name_re = _escape(product_name)
         increment = card.get_by_role("button", name=re.compile(rf"^Increment quantity of {name_re}", re.I))
         for _ in range(MAX_CLICKS_PER_ITEM):
             qty = await self._card_quantity(card)
@@ -230,10 +327,26 @@ class InstacartSite:
                 button = increment
             else:  # collapsed "Quantity: N ct. Change quantity" — open the stepper first
                 button = card.get_by_role("button", name=re.compile(r"Change quantity", re.I))
-            await human_pause()
-            await button.first.click()
-            await self.page.wait_for_timeout(1500)
+            await human_pause(0.1, 0.3)
+            await self._dismiss_overlays(page)
+            try:
+                await button.first.click(timeout=CLICK_TIMEOUT_MS)
+            except PlaywrightTimeoutError:
+                await self._dismiss_overlays(page)
+                try:
+                    await button.first.click(timeout=CLICK_TIMEOUT_MS)
+                except PlaywrightTimeoutError:
+                    raise LookupError(f"Couldn't add {product_name} at {store}: Instacart's page kept blocking "
+                                      f"the click. Add it yourself in Instacart.") from None
+            await self._wait_changed(card, qty)
         return await self._card_quantity(card)
+
+    async def _wait_changed(self, card, before: float, limit_s: float = 3.0) -> None:
+        """After a click, wait only until the card shows a new quantity (not a fixed 1.5 s)."""
+        for _ in range(int(limit_s / 0.12)):
+            if await self._card_quantity(card) != before:
+                return
+            await asyncio.sleep(0.12)
 
     async def cart_count(self, store: str) -> int | None:
         await self.page.goto(f"{BASE}/store/{store}/storefront", wait_until="domcontentloaded")
@@ -306,6 +419,8 @@ async def open_instacart(user_id: str, ask: Ask) -> AsyncIterator[InstacartSite]
                     raise LoginRequiredError("Signed in, but Instacart didn't keep the session. Try again.")
             else:
                 await login(session.page, ask)
-        yield InstacartSite(session.page)
+        # Hidden Chrome searches three items at once in separate tabs. A visible window stays on one tab:
+        # background tabs in a visible window can be throttled by the browser.
+        yield InstacartSite(session.page, tabs=3 if headless else 1)
     finally:
         await session.close()

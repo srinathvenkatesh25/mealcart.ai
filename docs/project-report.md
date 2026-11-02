@@ -80,7 +80,7 @@ solve → validate → consolidate and asks you again.
 - Prices and totals are before fees and tax; the estimate before shopping needs prices from an
   earlier cart.
 - The ZIP code is checked against the delivery address saved on your Instacart account, not used to change it; a mismatch is a warning. Stores and prices follow the account's address.
-- Store choice is a heuristic: an AI shortlist ranked by a search probe for the hardest-to-find items. Items the best store lacks are bought at the next-ranked stores, up to three; each store is a separate cart with its own fees.
+- Store choice is lazy: one AI call shortlists stores in the order to try them, the first gets the whole list, and only the items it lacks are looked for at the next stores, up to three; each store is a separate cart with its own fees.
 - Pack sizes with unreadable text default to one pack with a note; loose produce uses an estimated
   weight per item (onion about 150 g), which affects how many are bought, never the nutrition.
 - Carbs and fat are reported per day, per meal and per ingredient, but not targeted.

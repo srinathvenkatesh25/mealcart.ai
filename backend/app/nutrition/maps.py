@@ -132,8 +132,15 @@ def singular(token: str) -> str:
     return token
 
 
+# Regional spellings of one food, after singular(): "chilli powder" in a pantry must match chili_powder.
+SPELLINGS = {
+    "chilli": "chili", "chilly": "chili", "chily": "chili", "chile": "chili",
+    "yoghurt": "yogurt", "aubergine": "eggplant", "courgette": "zucchini", "garbanzo": "chickpea",
+}
+
+
 def _tokens(name: str) -> list[str]:
-    return [singular(t) for t in normalize(name).split("_") if t]
+    return [SPELLINGS.get(t, t) for t in (singular(t) for t in normalize(name).split("_") if t)]
 
 
 def contains_term(ingredient: str, term: str) -> bool:

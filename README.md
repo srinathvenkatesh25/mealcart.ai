@@ -97,7 +97,7 @@ Three personas, each with a different reason to use MealCart and a different way
 | J1 | **Set targets → plan.** Calories, protein, ZIP, budget, cuisines, dislikes, time limit, equipment, pantry; or describe the week in a sentence. | Planner | A checked 7-day plan in about a minute, with live progress |
 | J2 | **Review and question.** Each day is shown as a nutrition label; every meal shows its calories and protein, and opens to per-ingredient numbers. Swap a meal by saying why. Untick what you already have. | Dieter, Planner | A plan the person understands and has adjusted |
 | J3 | **Approve.** Item count and estimated cost against the budget. Fill the cart, swap again, or cancel. | Shopper | Nothing is bought without an explicit yes |
-| J4 | **Shop.** A hidden browser ranks stores, picks products, sizes packs and adds them. It pauses for the sign-in code, an existing cart, or a substitute that breaks the plan. | Shopper | A filled cart, across up to 3 stores if needed |
+| J4 | **Shop.** A hidden browser opens the best-fit store, picks products three items at a time, sizes packs and adds them. It pauses for the sign-in code, an existing cart, or a substitute that breaks the plan. | Shopper | A filled cart, across up to 3 stores if needed |
 | J5 | **Verify and hand off.** The cart is read back and compared item by item with the list. Then open Instacart and check out. | Shopper | The person pays, knowing the cart matches the plan |
 
 <p>
@@ -216,7 +216,7 @@ models. The full diagram is in [docs/architecture.html](docs/architecture.html),
 | **Which models** | The strongest paid model, or free tiers | Free tiers (Gemini, then Groq) with a fallback chain | The best model in my evals wasn't free. The architecture moves every measurable task into code, so a weaker model is enough. |
 | **How often to call the AI** | Per day, or per week | One call for the whole week, split automatically if a provider rejects the size | Bigger requests, and some providers cap request size. In exchange, a plan uses 1 request instead of 6 against a quota of about 20 a day. |
 | **Browser visibility** | Visible window, or hidden | Hidden by default; a window opens only for sign-in | A hidden browser can't pass a CAPTCHA, so the run stops with an explanation rather than misreporting items. |
-| **How many stores** | One store, or many | Up to 3, ranked by who stocks the hardest-to-find items | Each store is a separate cart with its own fees. In exchange, near-complete coverage. |
+| **How many stores** | One store, or many | Up to 3, tried in order: only items the first store lacks go to the next | Each store is a separate cart with its own fees. In exchange, near-complete coverage. |
 | **ZIP code** | Change Instacart's address, or check it | Check and warn, never change | The user fixes a mismatch themselves; MealCart never edits their account. |
 | **Cooking times** | Trust the AI's estimate, or apply floors | Conservative minimums for slow foods (raw rice and chicken ≥ 15 min, dried beans ≥ 50) | Some times are cautious. In exchange, no "5-minute" pulao. |
 

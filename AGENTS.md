@@ -19,7 +19,7 @@ backend/app/
   hitl/        event shapes and the replayable event bus
 frontend/      Next.js 16 page (app/, components/, lib/)
 tests/         pytest; fakes.py holds the fake LLM, fake store and offline USDA table
-scripts/       login, live demos, terminal client
+scripts/       Instacart login
 docs/          build-plan.md (spec), project-report.md
 ```
 
@@ -51,9 +51,7 @@ run is in progress (`runs.status` is `running` or `awaiting_hitl`).
 4. **The LLM never does arithmetic.** Portions, macros, pack counts, prices and timings are computed
    in Python. Anything the LLM is told to respect is also checked in `nutrition/validator.py`.
 5. **Tests never call live services.** Use `tests/fakes.py` (`ScriptedLLM`, `FakeSite`,
-   `fake_lookup`). Live AI calls spend a small free quota (about 20 requests per Gemini model a day),
-   and the live scripts (`plan_demo.py`, `shop_demo.py`, `run_cli.py`) use the real Instacart cart.
-   Run them only when asked.
+   `fake_lookup`). Live AI calls spend a small free quota (about 20 requests per Gemini model a day).
 6. **All Instacart page knowledge lives in `shopping/instacart.py`:** selectors and text parsers,
    each parser tested on page text captured from the live site. When the site changes, update the
    parser and its captured-text test together.
